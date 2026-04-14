@@ -1,0 +1,43 @@
+# === KRITISCH: niemals Tagebuchdaten oder Secrets ins Repo ===
+.env
+.env.*
+!.env.example
+data/
+*.db
+*.db-wal
+*.db-shm
+*.sqlite
+*.sqlite3
+
+# Audio-Uploads (werden ohnehin nach Transkription verworfen, hier doppelt abgesichert)
+uploads/
+*.wav
+*.mp3
+*.m4a
+*.ogg
+*.webm
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+*.egg-info/
+
+# Node / Frontend
+node_modules/
+dist/
+build/
+.svelte-kit/
+coverage/
+playwright-report/
+test-results/
+
+# OS / Editor
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.swp
