@@ -30,7 +30,13 @@ export async function* streamChat(
       if (!f.startsWith("data: ")) continue;
       const payload = f.slice(6);
       if (payload === "[DONE]") return;
-      yield payload;
+      // Server JSON-encodes each token so newlines survive SSE framing.
+      try {
+        yield JSON.parse(payload) as string;
+      } catch {
+        // Backwards-compat: tolerate unencoded payloads.
+        yield payload;
+      }
     }
   }
 }

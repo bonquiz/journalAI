@@ -2,8 +2,12 @@
   import { onMount } from "svelte";
   import { page } from "$app/stores";
   import { goto } from "$app/navigation";
+  import { marked } from "marked";
+
   import { api } from "$lib/api";
   import TagChip from "$lib/components/TagChip.svelte";
+
+  marked.setOptions({ gfm: true, breaks: true });
 
   type EntryDetail = {
     id: string;
@@ -100,7 +104,8 @@
   <article class="detail">
     <time>{entry.entry_date}</time>
     <h1>{entry.title}</h1>
-    <pre class="content">{entry.content}</pre>
+    <!-- eslint-disable-next-line svelte/no-at-html-tags -->
+    <div class="content markdown">{@html marked.parse(entry.content) as string}</div>
     <div class="tags">
       {#each entry.tags as t (t)}<TagChip name={t} />{/each}
     </div>
@@ -145,12 +150,23 @@
 <style>
   .detail time { color: var(--muted); }
   .content {
-    white-space: pre-wrap;
-    font-family: inherit;
     line-height: 1.6;
     background: #f5f7fa;
     padding: 1rem;
     border-radius: var(--radius);
+  }
+  .content.markdown :global(h1),
+  .content.markdown :global(h2),
+  .content.markdown :global(h3) { margin: 0.8rem 0 0.4rem; }
+  .content.markdown :global(p) { margin: 0.6rem 0; }
+  .content.markdown :global(ul),
+  .content.markdown :global(ol) { margin: 0.5rem 0; padding-left: 1.5rem; }
+  .content.markdown :global(strong) { font-weight: 600; }
+  .content.markdown :global(blockquote) {
+    border-left: 3px solid var(--border);
+    margin: 0.5rem 0;
+    padding-left: 1rem;
+    color: var(--muted);
   }
   .tags { display: flex; flex-wrap: wrap; align-items: center; margin: 0.75rem 0; }
   .tag-input { width: 8rem; }
