@@ -78,3 +78,31 @@ def test_password_change_wrong_old():
                    json={"old_password": "wrong", "new_password": "x"},
                    cookies=cookies(sid), headers=HEADERS)
     assert r.status_code == 401
+
+
+def test_tts_voice_and_speed_persist_and_roundtrip():
+    sid = create_session()
+    with TestClient(app) as c:
+        r = c.put(
+            "/api/settings",
+            json={"tts_voice": "nova", "tts_speed": 1.25},
+            cookies=cookies(sid),
+            headers=HEADERS,
+        )
+        assert r.status_code == 200
+        g = c.get("/api/settings", cookies=cookies(sid)).json()
+    assert g["tts_voice"] == "nova"
+    assert g["tts_speed"] == 1.25
+
+
+def test_tts_voice_empty_string_clears_override():
+    """Empty string PUT must reset the DB column to NULL (spec §5.4 last bullet)."""
+    sid = create_session()
+    with TestClient(app) as c:
+        c.put("/api/settings", json={"tts_voice": "nova"},
+              cookies=cookies(sid), headers=HEADERS)
+        c.put("/api/settings", json={"tts_voice": "", "tts_speed": None},
+              cookies=cookies(sid), headers=HEADERS)
+        g = c.get("/api/settings", cookies=cookies(sid)).json()
+    assert g["tts_voice"] is None
+    assert g["tts_speed"] is None

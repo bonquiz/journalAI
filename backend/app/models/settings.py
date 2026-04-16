@@ -1,4 +1,4 @@
-from sqlalchemy import CheckConstraint, Integer, String, Text
+from sqlalchemy import CheckConstraint, Float, Integer, String, Text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db import Base
@@ -25,3 +25,5 @@ class AppSettings(Base):
     totp_secret: Mapped[str | None] = mapped_column(String)
     totp_pending_secret: Mapped[str | None] = mapped_column(String)
     password_hash: Mapped[str] = mapped_column(String, nullable=False)
+    tts_voice: Mapped[str | None] = mapped_column(String)
+    tts_speed: Mapped[float | None] = mapped_column(Float)

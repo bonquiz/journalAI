@@ -14,6 +14,8 @@ class SettingsOut(BaseModel):
     tts_base_url: str | None = None
     tts_api_key_masked: str | None = None
     tts_model: str | None = None
+    tts_voice: str | None = None
+    tts_speed: float | None = None
     system_prompt: str | None = None
     totp_enabled: bool = False
 
@@ -31,6 +33,8 @@ class SettingsPatch(BaseModel):
     tts_base_url: str | None = None
     tts_api_key: str | None = None
     tts_model: str | None = None
+    tts_voice: str | None = None
+    tts_speed: float | None = None
     system_prompt: str | None = None
 
 

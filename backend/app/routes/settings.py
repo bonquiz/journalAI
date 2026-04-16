@@ -36,6 +36,8 @@ async def get_settings() -> SettingsOut:
             tts_base_url=s.tts_base_url,
             tts_api_key_masked=_mask(s.tts_api_key_wrapped),
             tts_model=s.tts_model,
+            tts_voice=s.tts_voice,
+            tts_speed=s.tts_speed,
             system_prompt=s.system_prompt,
             totp_enabled=bool(s.totp_secret),
         )
@@ -55,6 +57,14 @@ async def update_settings(body: SettingsPatch) -> dict:
                 setattr(s, f"{cap}_api_key_wrapped", wrap_secret(data[f"{cap}_api_key"]))
             if f"{cap}_model" in data:
                 setattr(s, f"{cap}_model", data[f"{cap}_model"])
+        if "tts_voice" in data:
+            # Empty string or whitespace resets override to NULL (spec §5.4).
+            raw_voice = data["tts_voice"]
+            s.tts_voice = raw_voice.strip() if isinstance(raw_voice, str) and raw_voice.strip() else None
+        if "tts_speed" in data:
+            # None or empty string resets override to NULL.
+            raw_speed = data["tts_speed"]
+            s.tts_speed = None if raw_speed in (None, "") else float(raw_speed)
         if "system_prompt" in data:
             s.system_prompt = data["system_prompt"]
         db.commit()
