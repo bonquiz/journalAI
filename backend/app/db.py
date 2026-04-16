@@ -13,6 +13,42 @@ from sqlalchemy.orm import DeclarativeBase, sessionmaker
 from app.config import settings
 
 
+# pysqlcipher3's Connection.create_function() does not accept the `deterministic`
+# kwarg that modern SQLAlchemy (>=2.0) passes to register REGEXP/floor functions.
+# The Connection class is a C extension and can't be monkey-patched, so we patch
+# SQLAlchemy's pysqlite dialect to use `create_func_kw = {}` regardless of server
+# version. This loses deterministic-marking but keeps REGEXP working.
+try:
+    from sqlalchemy.dialects.sqlite import pysqlite as _ps
+
+    def _build_connect_hook():
+        """Return a connect(conn) callable that avoids deterministic= kwarg."""
+        import math
+        import re
+
+        def _regexp(a, b):
+            if b is None:
+                return None
+            return 1 if re.search(a, b) else 0
+
+        def _connect(conn):
+            conn.create_function("regexp", 2, _regexp)
+            conn.create_function("floor", 1, math.floor)
+
+        return _connect
+
+    def _patched_on_connect(self):
+        return _build_connect_hook()
+
+    def _patched_on_connect_url(self, url):  # noqa: ANN001
+        return _build_connect_hook()
+
+    _ps.SQLiteDialect_pysqlite.on_connect = _patched_on_connect  # type: ignore[assignment]
+    _ps.SQLiteDialect_pysqlite.on_connect_url = _patched_on_connect_url  # type: ignore[assignment]
+except Exception:
+    pass
+
+
 class Base(DeclarativeBase):
     pass
 
