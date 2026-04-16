@@ -12,6 +12,7 @@ from app.routes.auth import router as auth_router
 from app.routes.chat import router as chat_router
 from app.routes.entries import router as entries_router
 from app.routes.tags import router as tags_router
+from app.routes.settings import router as settings_router
 from app.routes.transcribe import router as transcribe_router
 from app.security.csrf import CsrfMiddleware
 from app.security.rate_limit import limiter
@@ -38,6 +39,7 @@ app.include_router(auth_router)
 app.include_router(chat_router)
 app.include_router(entries_router)
 app.include_router(tags_router)
+app.include_router(settings_router)
 app.include_router(transcribe_router)
 
 
