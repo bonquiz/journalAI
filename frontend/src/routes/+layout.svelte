@@ -8,6 +8,10 @@
 
   onMount(async () => {
     await session.refresh();
+
+    if ("serviceWorker" in navigator) {
+      navigator.serviceWorker.register("/service-worker.js").catch(() => {});
+    }
   });
 </script>
 
