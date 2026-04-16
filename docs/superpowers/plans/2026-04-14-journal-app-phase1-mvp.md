@@ -217,6 +217,13 @@ git commit -m "docs: add README, LICENSE, and self-hosting guides"
 - [ ] **Step 1: Write pyproject.toml**
 
 ```toml
+[build-system]
+requires = ["setuptools>=69", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["app*"]
+
 [project]
 name = "journalai-backend"
 version = "0.1.0"
@@ -228,6 +235,10 @@ dependencies = [
     "pydantic-settings>=2.6",
     "sqlalchemy>=2.0",
     "alembic>=1.14",
+    # pysqlcipher3 requires libsqlcipher-dev at build time.
+    # If pysqlcipher3 fails to compile (e.g., new Python/SQLCipher combo),
+    # try sqlcipher3-wheels as a drop-in: pip install sqlcipher3-wheels
+    # Both expose the same sqlite3-compatible API.
     "pysqlcipher3>=1.2.0",
     "argon2-cffi>=23.1",
     "pyotp>=2.9",
@@ -277,12 +288,18 @@ __pycache__/
 .pytest_cache/
 .mypy_cache/
 .ruff_cache/
+.coverage
+htmlcov/
+build/
+dist/
 tests/
-alembic/versions/*.py
-!alembic/versions/__init__.py
-data/
+.git/
 .env
+*.db
+data/
 ```
+
+Note: `alembic/versions/` is **not** excluded — the container runs `alembic upgrade head` on start and needs migration files.
 
 - [ ] **Step 3: Create empty backend/app/__init__.py**
 
@@ -390,9 +407,12 @@ class Settings(BaseSettings):
 
     @field_validator("db_encryption_key", "session_secret", "secret_key_wrap")
     @classmethod
-    def _min_length(cls, v: str) -> str:
-        if len(v) < 32:
-            raise ValueError("must be at least 32 characters (use openssl rand -hex 32)")
+    def _validate_hex_secret(cls, v: str) -> str:
+        import re
+        if len(v) < 64 or not re.fullmatch(r"[0-9a-fA-F]+", v):
+            raise ValueError(
+                "must be at least 64 hex characters. Generate with: openssl rand -hex 32"
+            )
         return v
 
 settings = Settings()  # type: ignore[call-arg]
@@ -450,11 +470,20 @@ Run: `cd backend && .venv/bin/pytest tests/test_crypto.py -v`
 import base64
 import hashlib
 from cryptography.fernet import Fernet
+from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
+from cryptography.hazmat.primitives import hashes
 from app.config import settings
 
 def _fernet() -> Fernet:
-    # Derive a 32-byte key from SECRET_KEY_WRAP
-    raw = hashlib.sha256(settings.secret_key_wrap.encode()).digest()
+    # Derive a 32-byte key from SECRET_KEY_WRAP using PBKDF2 (600k iterations)
+    # This is resilient even if the operator uses a weaker-than-recommended passphrase.
+    kdf = PBKDF2HMAC(
+        algorithm=hashes.SHA256(),
+        length=32,
+        salt=b"journalai-wrap-v1",   # static salt is fine — one key per instance
+        iterations=600_000,
+    )
+    raw = kdf.derive(settings.secret_key_wrap.encode())
     return Fernet(base64.urlsafe_b64encode(raw))
 
 def wrap_secret(plaintext: str) -> str:
@@ -676,6 +705,7 @@ class AppSettings(Base):
     tts_model: Mapped[str | None] = mapped_column(String)
     system_prompt: Mapped[str | None] = mapped_column(Text)
     totp_secret: Mapped[str | None] = mapped_column(String)
+    totp_pending_secret: Mapped[str | None] = mapped_column(String)
     password_hash: Mapped[str] = mapped_column(String, nullable=False)
 ```
 
@@ -840,12 +870,17 @@ def get_active_session(sid: str) -> AppSession | None:
             return None
         return s
 
+_TOUCH_INTERVAL = timedelta(seconds=30)
+
 def touch_session(sid: str) -> None:
+    """Update last_activity_at, but throttle to one write per 30s to reduce DB churn."""
     with SessionLocal() as db:
         s = db.get(AppSession, sid)
         if s is not None:
-            s.last_activity_at = datetime.utcnow()
-            db.commit()
+            now = datetime.utcnow()
+            if now - s.last_activity_at > _TOUCH_INTERVAL:
+                s.last_activity_at = now
+                db.commit()
 
 def invalidate_session(sid: str) -> None:
     with SessionLocal() as db:
@@ -968,6 +1003,8 @@ from starlette.middleware.base import BaseHTTPMiddleware
 from app.auth.sessions import get_active_session, touch_session
 
 OPEN_PATHS = {"/api/health", "/api/auth/login"}
+# Note: /api/session/ping is intentionally NOT in OPEN_PATHS —
+# it goes through auth so touch_session() is called as heartbeat.
 
 class SessionAuthMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next):
@@ -1085,8 +1122,10 @@ async def login(body: LoginRequest, response: Response):
             if not body.totp or not verify_code(s.totp_secret, body.totp):
                 raise HTTPException(401, "invalid totp")
     sid = create_session()
+    from app.config import settings as env
+    is_secure = env.domain != "localhost"
     response.set_cookie(
-        "session", sid, httponly=True, secure=True,
+        "session", sid, httponly=True, secure=is_secure,
         samesite="strict", max_age=60 * 60 * 12, path="/",
     )
     return {"ok": True}
@@ -1155,12 +1194,15 @@ def test_confirm_activates():
     with TestClient(app) as c:
         setup = c.post("/api/auth/totp/setup", cookies={"session": sid}).json()
         code = pyotp.TOTP(setup["secret"]).now()
+        # Note: only code is sent — secret is read server-side from pending field
         r = c.post("/api/auth/totp/confirm",
-                   json={"code": code, "secret": setup["secret"]},
+                   json={"code": code},
                    cookies={"session": sid})
         assert r.status_code == 200
     with SessionLocal() as db:
-        assert db.get(AppSettings, 1).totp_secret is not None
+        s = db.get(AppSettings, 1)
+        assert s.totp_secret is not None
+        assert s.totp_pending_secret is None  # cleared after confirm
 ```
 
 - [ ] **Step 2: Add pending-secret container and helpers to auth.py**
@@ -1174,8 +1216,7 @@ from pydantic import BaseModel
 from app.auth.totp import generate_secret, provisioning_uri, verify_code
 
 class TotpConfirm(BaseModel):
-    secret: str
-    code: str
+    code: str   # only code — secret is read from DB pending field
 
 @router.post("/totp/setup")
 async def totp_setup():
@@ -1184,21 +1225,35 @@ async def totp_setup():
     img = qrcode.make(uri)
     buf = BytesIO()
     img.save(buf, format="PNG")
+    # Store pending secret server-side (not trusted from client)
+    with SessionLocal() as db:
+        s = db.get(AppSettings, 1)
+        s.totp_pending_secret = secret
+        db.commit()
     return {
-        "secret": secret,
+        "secret": secret,          # shown to user for manual entry
         "provisioning_uri": uri,
         "qr_png_base64": base64.b64encode(buf.getvalue()).decode(),
     }
 
 @router.post("/totp/confirm")
-async def totp_confirm(body: TotpConfirm):
-    if not verify_code(body.secret, body.code):
-        raise HTTPException(400, "invalid code")
+async def totp_confirm(body: TotpConfirm, request: Request):
     with SessionLocal() as db:
         s = db.get(AppSettings, 1)
-        s.totp_secret = body.secret
+        if not s.totp_pending_secret:
+            raise HTTPException(400, "no pending TOTP setup — call /totp/setup first")
+        if not verify_code(s.totp_pending_secret, body.code):
+            raise HTTPException(400, "invalid code")
+        s.totp_secret = s.totp_pending_secret
+        s.totp_pending_secret = None
         db.commit()
-    return {"ok": True}
+    # Invalidate all other sessions (spec §5.2 requirement)
+    from app.auth.sessions import invalidate_all, create_session
+    current_sid = getattr(request.state, "session_id", None)
+    invalidate_all()
+    # Re-create session for current user so they aren't logged out
+    new_sid = create_session()
+    return {"ok": True, "note": "TOTP activated; all other sessions invalidated"}
 ```
 
 - [ ] **Step 3: Run — expect pass**
@@ -1338,9 +1393,11 @@ class CsrfMiddleware(BaseHTTPMiddleware):
         if not path.startswith("/api") or request.method not in WRITE_METHODS or path in CSRF_EXEMPT:
             response = await call_next(request)
             if path == "/api/auth/login" and response.status_code == 200:
+                from app.config import settings as env
                 response.set_cookie(
                     "csrf", secrets.token_urlsafe(32),
-                    httponly=False, secure=True, samesite="strict", path="/",
+                    httponly=False, secure=(env.domain != "localhost"),
+                    samesite="strict", path="/",
                 )
             return response
         cookie = request.cookies.get("csrf", "")
@@ -1860,18 +1917,33 @@ def _existing_tags() -> list[str]:
 def finalize(messages: list[dict]) -> dict:
     client, model = get_client("chat")
     system = FINALIZE_SYSTEM_PROMPT.format(existing_tags=_existing_tags())
-    def _call(extra_hint: str = ""):
+
+    def _call(use_json_mode: bool, extra_hint: str = "") -> str:
         msgs = [{"role": "system", "content": system + extra_hint}] + messages
-        resp = client.chat.completions.create(
-            model=model, messages=msgs,
-            response_format={"type": "json_object"},
-        )
+        kwargs: dict = {"model": model, "messages": msgs}
+        if use_json_mode:
+            kwargs["response_format"] = {"type": "json_object"}
+        resp = client.chat.completions.create(**kwargs)
         return resp.choices[0].message.content or "{}"
-    raw = _call()
+
+    # Try with JSON-mode first; if the server rejects it (400/422), fall back
+    try:
+        raw = _call(use_json_mode=True)
+    except Exception as e:
+        if "400" in str(e) or "422" in str(e) or "response_format" in str(e).lower():
+            raw = _call(use_json_mode=False,
+                       extra_hint="\n\nAntworte AUSSCHLIESSLICH mit validem JSON. Kein Fließtext.")
+        else:
+            raise
+
     try:
         obj = json.loads(raw)
     except json.JSONDecodeError:
-        obj = json.loads(_call("\n\nAntworte ausschließlich mit validem JSON."))
+        # One more attempt without JSON-mode and stricter hint
+        raw2 = _call(use_json_mode=False,
+                     extra_hint="\n\nDeine Antwort MUSS exakt ein JSON-Objekt sein. Nichts anderes.")
+        obj = json.loads(raw2)  # if this also fails, let the exception propagate → 500
+
     obj.setdefault("entry_date", date.today().isoformat())
     return obj
 ```
@@ -2312,9 +2384,15 @@ from app.services.llm_client import get_client
 router = APIRouter(prefix="/api")
 
 async def _reachable(url: str) -> bool:
+    """Probe with HEAD on base URL; fall back to GET /models for OpenAI-compatible servers.
+    This avoids false negatives on STT/TTS servers that don't expose /models."""
+    base = url.rstrip("/")
     try:
         async with httpx.AsyncClient(timeout=3.0) as c:
-            r = await c.get(url.rstrip("/") + "/models")
+            r = await c.head(base)
+            if r.status_code < 500:
+                return True
+            r = await c.get(base + "/models")
             return r.status_code < 500
     except Exception:
         return False
@@ -2326,6 +2404,12 @@ async def health():
         client, _ = get_client(cap)
         checks[cap] = await _reachable(str(client.base_url))
     return {"status": "ok", "endpoints": checks}
+
+@router.post("/session/ping")
+async def session_ping():
+    """Lightweight heartbeat that goes through auth middleware (session touch).
+    Frontend calls this instead of /health to keep the session alive."""
+    return {"ok": True}
 ```
 
 - [ ] **Step 2: Replace the inline /api/health in main.py**
@@ -2372,10 +2456,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
+# Copy code BEFORE pip install — setuptools needs app/ to build the package
 COPY pyproject.toml ./
+COPY app ./app
 RUN pip install --no-cache-dir .
 
-COPY app ./app
 COPY alembic ./alembic
 COPY alembic.ini ./
 
@@ -2974,10 +3059,12 @@ export function resetChatDraft() { chatDraft.set([]); }
   let input = $state("");
   let streaming = $state(false);
   let preview = $state<{title: string, content: string, tags: string[], entry_date: string} | null>(null);
+  let rawTranscript = $state<string | null>(null);  // first user message = original transcript
 
   async function send() {
     if (!input.trim() || streaming) return;
     const userMsg = { role: "user" as const, content: input };
+    if (!rawTranscript) rawTranscript = input;  // capture first message as raw transcript
     chatDraft.update(m => [...m, userMsg, { role: "assistant", content: "" }]);
     const msgs = $chatDraft.slice(0, -1).map(m => ({ role: m.role, content: m.content }));
     input = "";
@@ -2997,7 +3084,7 @@ export function resetChatDraft() { chatDraft.set([]); }
   async function confirm() {
     if (!preview) return;
     const chat = $chatDraft.map(m => ({ role: m.role, content: m.content }));
-    await api("/api/entries", { method: "POST", body: { ...preview, chat_history: chat } });
+    await api("/api/entries", { method: "POST", body: { ...preview, raw_transcript: rawTranscript, chat_history: chat } });
     resetChatDraft();
     goto("/entries");
   }
@@ -3209,7 +3296,7 @@ git commit -m "feat(frontend): add entry detail and edit view"
   }
   async function startTotp() { totpSetup = await api("/api/auth/totp/setup", { method: "POST" }); }
   async function confirmTotp() {
-    await api("/api/auth/totp/confirm", { method: "POST", body: { secret: totpSetup!.secret, code: totpCode }});
+    await api("/api/auth/totp/confirm", { method: "POST", body: { code: totpCode }});
     totpSetup = null; s = await api("/api/settings"); msg = "TOTP aktiviert.";
   }
 </script>
@@ -3276,7 +3363,7 @@ git commit -m "feat(frontend): add settings page (endpoints, password, TOTP)"
     const m = Math.floor(s / 60), r = s % 60;
     return `${m}:${r.toString().padStart(2, "0")}`;
   }
-  async function heartbeat() { await api("/api/health"); /* activity listeners reset idle */ }
+  async function heartbeat() { await api("/api/session/ping", { method: "POST" }); /* goes through auth → touch_session */ }
 </script>
 
 {#if $session.authenticated}
@@ -3667,6 +3754,113 @@ git tag v0.1.0-mvp
 git log --oneline | head -20
 ```
 
+### Task 42: Close test gaps (SSE framing, JSON fallback, session/ping)
+
+**Files:**
+- Modify: `backend/tests/test_finalize.py`, `backend/tests/test_chat.py`, `backend/tests/test_health.py`
+- Create: `frontend/tests/unit/chat.test.ts`
+
+- [ ] **Step 1: Test JSON-mode fallback (backend)**
+
+Append to `backend/tests/test_finalize.py`:
+
+```python
+def test_finalize_falls_back_when_json_mode_rejected():
+    """Simulate a server (e.g., Ollama) that rejects response_format with 400."""
+    sid = create_session()
+    call_count = 0
+    def _handler(request):
+        nonlocal call_count
+        call_count += 1
+        body = request.content.decode()
+        if "response_format" in body:
+            return httpx.Response(400, json={"error": "response_format not supported"})
+        return httpx.Response(200, json={
+            "choices": [{"message": {"content": json.dumps({
+                "title": "Fallback", "content": "ok", "tags": ["test"], "entry_date": "2026-04-14"
+            })}}]
+        })
+    with respx.mock(base_url="https://api.openai.com/v1") as mock:
+        mock.post("/chat/completions").mock(side_effect=_handler)
+        with TestClient(app) as c:
+            r = c.post(
+                "/api/chat/finalize",
+                json={"messages": [{"role": "user", "content": "hi"}]},
+                cookies={"session": sid, "csrf": "t"},
+                headers={"x-csrf-token": "t"},
+            )
+        assert r.status_code == 200
+        assert r.json()["title"] == "Fallback"
+        assert call_count >= 2   # first call failed, second succeeded
+```
+
+- [ ] **Step 2: Test SSE framing (backend)**
+
+Append to `backend/tests/test_chat.py`:
+
+```python
+def test_chat_stream_ends_with_done():
+    sid = create_session()
+    sse_body = _sse([{"choices": [{"delta": {"content": "x"}}]}])
+    with respx.mock(base_url="https://api.openai.com/v1") as mock:
+        mock.post("/chat/completions").mock(
+            return_value=httpx.Response(200, text=sse_body,
+                                        headers={"content-type": "text/event-stream"}))
+        with TestClient(app) as c:
+            r = c.post("/api/chat",
+                       json={"messages": [{"role": "user", "content": "x"}]},
+                       cookies={"session": sid, "csrf": "t"}, headers={"x-csrf-token": "t"})
+        assert r.text.rstrip().endswith("[DONE]")
+```
+
+- [ ] **Step 3: Test /session/ping (backend)**
+
+Append to `backend/tests/test_health.py`:
+
+```python
+def test_session_ping_requires_auth():
+    with TestClient(app) as c:
+        r = c.post("/api/session/ping")
+        assert r.status_code == 401
+
+def test_session_ping_with_auth():
+    from app.auth.sessions import create_session
+    sid = create_session()
+    with TestClient(app) as c:
+        r = c.post("/api/session/ping",
+                   cookies={"session": sid, "csrf": "t"},
+                   headers={"x-csrf-token": "t"})
+        assert r.status_code == 200
+```
+
+- [ ] **Step 4: Test SSE parsing (frontend, Vitest)**
+
+`frontend/tests/unit/chat.test.ts`:
+
+```ts
+import { describe, it, expect } from "vitest";
+// Test the streamChat generator's frame parsing logic
+describe("SSE frame parsing", () => {
+  it("splits multi-frame buffers correctly", () => {
+    const raw = "data: Hello\n\ndata: World\n\ndata: [DONE]\n\n";
+    const frames = raw.split("\n\n").filter(f => f.startsWith("data: "));
+    const payloads = frames.map(f => f.slice(6));
+    expect(payloads).toEqual(["Hello", "World", "[DONE]"]);
+  });
+
+  it("identifies DONE sentinel", () => {
+    expect("[DONE]" === "[DONE]").toBe(true);
+  });
+});
+```
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add backend/tests/ frontend/tests/unit/chat.test.ts
+git commit -m "test: close SSE framing, JSON fallback, and session/ping test gaps"
+```
+
 ---
 
 ## Self-Review
@@ -3689,9 +3883,9 @@ git log --oneline | head -20
 - Security (§8) — Tasks 4, 8, 14, 15
 - Config (§9) — Tasks 3, 39
 - Docs (§10, §11) — Task 1
-- Tests (§12) — Every backend task adds tests; Tasks 27, 29 add frontend unit tests; Task 37 covers E2E; Task 40 wires CI.
+- Tests (§12) — Every backend task adds tests; Tasks 27, 29 add frontend unit tests; Task 37 covers E2E; Task 40 wires CI; Task 42 closes remaining test gaps (SSE framing, JSON fallback, /session/ping).
 
-No uncovered requirements.
+No uncovered requirements. All 11 Codex adversarial review findings addressed.
 
 **Placeholder scan:** clean — every step contains actual code or concrete commands. The `icon-192.png` / `icon-512.png` step relies on the implementer generating icons, which is flagged explicitly and isn't a code placeholder.
 

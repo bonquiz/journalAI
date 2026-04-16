@@ -104,8 +104,9 @@ CREATE TABLE settings (
   embed_base_url  TEXT, embed_api_key TEXT, embed_model TEXT,
   tts_base_url    TEXT, tts_api_key   TEXT, tts_model   TEXT,
   system_prompt   TEXT,
-  totp_secret     TEXT,
-  password_hash   TEXT NOT NULL
+  totp_secret         TEXT,
+  totp_pending_secret TEXT,                 -- server-side pending during setup
+  password_hash       TEXT NOT NULL
 );
 
 CREATE TABLE sessions (
@@ -152,7 +153,7 @@ backend/app/
 - Erfolgreiche Anmeldung erstellt eine Zeile in `sessions` und setzt ein opakes Cookie (`HttpOnly`, `Secure`, `SameSite=Strict`).
 - **Idle-Timeout (Default 10 Min, ENV: `SESSION_IDLE_MINUTES`):** Middleware prüft `last_activity_at` bei jedem Request. Bei Überschreitung → Session löschen, 401.
 - **Absolute-Timeout (Default 12 h, ENV: `SESSION_ABSOLUTE_HOURS`):** harte Obergrenze, unabhängig von Aktivität.
-- Jeder erfolgreich authentifizierte Request aktualisiert `last_activity_at`.
+- Jeder erfolgreich authentifizierte Request aktualisiert `last_activity_at` (gedrosselt auf max. 1 Write pro 30 Sek.).
 - `POST /auth/logout` löscht die Session-Zeile zusätzlich zum Cookie.
 - Nach Passwortwechsel oder TOTP-Aktivierung werden alle anderen Sessions invalidiert.
 - CSRF-Schutz via Double-Submit-Token für schreibende Requests.
@@ -164,8 +165,7 @@ backend/app/
 
 - **STT:** `client.audio.transcriptions.create(file=…, model=…)` — kompatibel mit OpenAI, faster-whisper-server, whisper.cpp server.
 - **Chat:** `client.chat.completions.create(…, stream=True)` — SSE zum Frontend.
-- **Finalize:** `response_format={"type":"json_object"}` + Finalize-System-Prompt → garantiertes JSON `{title, content, tags[], entry_date}`.
-- Bei ungültigem JSON: einmaliger Auto-Retry mit strengerer System-Message; danach 500 an den Client.
+- **Finalize:** Versucht `response_format={"type":"json_object"}`; wenn der Server 400/422 antwortet (z. B. Ollama ohne JSON-Mode), Fallback auf Prompt-only-JSON mit strengerem Hinweis. Bei ungültigem JSON: einmaliger Auto-Retry; danach 500 an den Client.
 
 ### 5.4 API
 
@@ -186,6 +186,8 @@ backend/app/
 | `GET` | `/api/tags` | ja | Alle Tags (Filter/Autocomplete) |
 | `GET` | `/api/settings` | ja | Settings (Keys maskiert) |
 | `PUT` | `/api/settings` | ja | Settings aktualisieren |
+| `POST` | `/api/settings/password` | ja | Passwort ändern (old + new) |
+| `POST` | `/api/session/ping` | ja | Heartbeat, hält Session aktiv |
 | `GET` | `/api/health` | – | Ping + Reachability-Check der Endpoints |
 
 Audio-Upload-Limit: 25 MB (ENV `MAX_UPLOAD_MB`). Audio-Dateien werden **nach Transkription verworfen** (Datenschutz).
@@ -287,11 +289,11 @@ Erfinde keine Inhalte, die im Dialog nicht vorkamen.
 ## 8. Sicherheit
 
 - HTTPS obligatorisch für Nicht-Localhost-Deployments (Caddy + Let's Encrypt).
-- Session-Cookies: `HttpOnly`, `Secure`, `SameSite=Strict`.
+- Session-Cookies: `HttpOnly`, `Secure` (dynamisch: `false` bei `DOMAIN=localhost`), `SameSite=Strict`.
 - Passwort: argon2id-Hash in `settings.password_hash`.
 - Optional TOTP-2FA (`pyotp`). QR-Code-Setup in Settings-UI.
 - DB: SQLCipher-Volltextverschlüsselung. Key aus `DB_ENCRYPTION_KEY` (64 Hex, in `.env`).
-- API-Keys in DB zusätzlich mit separatem Key aus `SECRET_KEY_WRAP` (ENV) verschlüsselt, damit ein Leak der DB-Datei ohne ENV nicht ausreicht.
+- API-Keys in DB mit Fernet verschlüsselt; Fernet-Key wird aus `SECRET_KEY_WRAP` (ENV, 64 Hex erzwungen) via PBKDF2-HMAC (600k Iterationen) abgeleitet — resilient auch bei schwächerer Passphrase.
 - CSRF-Double-Submit-Token für POST/PUT/DELETE.
 - Rate-Limits (s. 5.2).
 - Audio-Dateien werden nach Transkription sofort gelöscht.
@@ -379,6 +381,6 @@ Ausgeschlossen (separate Specs für spätere Phasen):
 
 Keine blockierenden — der Plan kann geschrieben werden. Während der Implementierung zu verifizieren:
 
-- SQLCipher-Python-Binding-Wahl (`pysqlcipher3` vs. `sqlcipher3-wheels`); auf Alpine eventuell anders als auf Debian-Base.
-- Fallback, falls der Chat-Endpoint kein echtes JSON-Mode kann (kein `response_format`): dann Prompt-Only-JSON mit striktem Validator.
+- SQLCipher-Python-Binding: Default ist `pysqlcipher3` (C-Build gegen `libsqlcipher-dev`). Falls die Compilation fehlschlägt (neue Python/SQLCipher-Kombination), ist `sqlcipher3-wheels` (vorkompiliert) ein Drop-in-Ersatz. Dockerfile pinnt auf Debian-slim mit expliziten Build-Deps. CI testet den Build im Docker-Step.
+- ~~Fallback, falls der Chat-Endpoint kein echtes JSON-Mode kann~~ → Gelöst: `finalize()` fängt 400/422 ab und fällt auf Prompt-Only-JSON zurück.
 - PWA: Service-Worker darf `/api/*` nicht cachen, um Cookie-Sessions nicht zu brechen.
