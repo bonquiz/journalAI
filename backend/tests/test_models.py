@@ -35,16 +35,24 @@ def test_session_expiry_fields():
 
 
 def test_settings_singleton_constraint():
+    # Clean slate — another test module may have left an id=1 row.
+    with SessionLocal() as s:
+        s.query(AppSettings).delete()
+        s.commit()
     with SessionLocal() as s:
         s.add(AppSettings(id=1, password_hash="argon2-placeholder"))
         s.commit()
-        # Inserting another row with id=1 would fail; id=2 should also fail due to CHECK.
+        # Inserting another row with id=2 must fail due to CHECK (id = 1).
         import pytest
         from sqlalchemy.exc import IntegrityError
         with pytest.raises(IntegrityError):
             s.add(AppSettings(id=2, password_hash="x"))
             s.commit()
         s.rollback()
+    # Clean up so we don't contaminate subsequent tests.
+    with SessionLocal() as s:
+        s.query(AppSettings).delete()
+        s.commit()
 
 
 def test_entry_cascade_delete_tags():
