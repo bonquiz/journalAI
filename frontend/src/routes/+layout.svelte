@@ -3,6 +3,7 @@
   import { onMount } from "svelte";
   import { session } from "$lib/stores/session";
   import SessionCountdown from "$lib/components/SessionCountdown.svelte";
+  import ToastContainer from "$lib/components/ToastContainer.svelte";
 
   let { children } = $props();
 
@@ -14,6 +15,8 @@
     }
   });
 </script>
+
+<ToastContainer />
 
 <header class="topbar">
   <a href="/" class="brand">journalAI</a>
