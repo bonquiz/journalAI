@@ -8,11 +8,12 @@
     embed_base_url: string | null; embed_api_key_masked: string | null; embed_model: string | null;
     tts_base_url: string | null; tts_api_key_masked: string | null; tts_model: string | null;
     system_prompt: string | null;
+    tts_voice: string | null; tts_speed: number | null;
     totp_enabled: boolean;
   };
 
   let s = $state<SettingsOut | null>(null);
-  let form = $state<Record<string, string>>({});
+  let form = $state<Record<string, string | number | null>>({});
   let pwOld = $state("");
   let pwNew = $state("");
   let totpSetup = $state<{ secret: string; qr_png_base64: string } | null>(null);
@@ -67,6 +68,14 @@
     }
   }
 
+  function voiceTooltip(baseUrl: string | null): string {
+    const u = (baseUrl ?? "").toLowerCase();
+    if (u.includes("openai.com")) return "z. B. alloy, echo, fable, onyx, nova, shimmer";
+    if (u.includes("kokoro") || u.includes(":8880")) return "z. B. af_sarah, af_bella, am_adam";
+    if (u.includes("openedai") || u.includes(":8000")) return "gemäß voice_to_speaker.yaml deines Servers";
+    return "Laut Dokumentation deines TTS-Servers";
+  }
+
   const caps = ["stt", "chat", "embed", "tts"] as const;
 </script>
 
@@ -94,6 +103,26 @@
         </label>
       </fieldset>
     {/each}
+    <fieldset>
+      <legend>TTS-Stimme & Tempo</legend>
+      <label>
+        Voice
+        <input
+          bind:value={form.tts_voice}
+          placeholder={s.tts_voice ?? "alloy"}
+          title={voiceTooltip(s.tts_base_url)}
+        />
+      </label>
+      <label>
+        Tempo
+        <input
+          type="range" min="0.5" max="2" step="0.05"
+          bind:value={form.tts_speed}
+          aria-label="Vorlese-Tempo"
+        />
+        <span class="muted">{(typeof form.tts_speed === "number" ? form.tts_speed : s.tts_speed ?? 1.0).toFixed(2)}×</span>
+      </label>
+    </fieldset>
     <label>
       System-Prompt
       <textarea bind:value={form.system_prompt} rows="6" placeholder={s.system_prompt ?? ""}></textarea>
@@ -145,4 +174,5 @@
     margin: 0.3rem 0;
   }
   img { max-width: 240px; }
+  .muted { color: var(--muted); font-size: 0.85em; margin-left: 0.5em; }
 </style>
