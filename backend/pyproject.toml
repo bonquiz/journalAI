@@ -1,0 +1,60 @@
+[build-system]
+requires = ["setuptools>=69", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["app*"]
+
+[project]
+name = "journalai-backend"
+version = "0.1.0"
+requires-python = ">=3.12"
+dependencies = [
+    "fastapi>=0.115",
+    "uvicorn[standard]>=0.32",
+    "pydantic>=2.9",
+    "pydantic-settings>=2.6",
+    "sqlalchemy>=2.0",
+    "alembic>=1.14",
+    # pysqlcipher3 requires libsqlcipher-dev at build time.
+    # If pysqlcipher3 fails to compile (e.g., new Python/SQLCipher combo),
+    # try sqlcipher3-wheels as a drop-in: pip install sqlcipher3-wheels
+    # Both expose the same sqlite3-compatible API.
+    "pysqlcipher3>=1.2.0",
+    "argon2-cffi>=23.1",
+    "pyotp>=2.9",
+    "python-multipart>=0.0.12",
+    "openai>=1.54",
+    "httpx>=0.27",
+    "cryptography>=43.0",
+    "slowapi>=0.1.9",
+    "qrcode[pil]>=7.4",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.3",
+    "pytest-asyncio>=0.24",
+    "pytest-cov>=6.0",
+    "respx>=0.21",
+    "ruff>=0.7",
+    "mypy>=1.13",
+    "types-qrcode",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP", "S", "ASYNC"]
+ignore = ["S101"]  # pytest uses assert
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+
+[tool.mypy]
+python_version = "3.12"
+strict = true
+plugins = ["pydantic.mypy"]
