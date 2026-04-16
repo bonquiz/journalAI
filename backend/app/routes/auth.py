@@ -1,10 +1,15 @@
 """Login / logout routes. Cookie is Secure-flag dynamic: on localhost, secure=False
 so the app works without HTTPS in dev; otherwise secure=True."""
+import base64
+from io import BytesIO
+
+import qrcode
 from fastapi import APIRouter, HTTPException, Request, Response
+from pydantic import BaseModel
 
 from app.auth.password import verify_password
-from app.auth.sessions import create_session, invalidate_session
-from app.auth.totp import verify_code
+from app.auth.sessions import create_session, invalidate_all, invalidate_session
+from app.auth.totp import generate_secret, provisioning_uri, verify_code
 from app.config import settings as env
 from app.db import SessionLocal
 from app.models.settings import AppSettings
@@ -40,3 +45,41 @@ async def logout(request: Request, response: Response) -> dict:
         invalidate_session(sid)
     response.delete_cookie("session", path="/")
     return {"ok": True}
+
+
+class TotpConfirm(BaseModel):
+    code: str   # secret is read server-side from pending field
+
+
+@router.post("/totp/setup")
+async def totp_setup() -> dict:
+    secret = generate_secret()
+    uri = provisioning_uri(secret)
+    img = qrcode.make(uri)
+    buf = BytesIO()
+    img.save(buf, format="PNG")
+    with SessionLocal() as db:
+        s = db.get(AppSettings, 1)
+        s.totp_pending_secret = secret
+        db.commit()
+    return {
+        "secret": secret,
+        "provisioning_uri": uri,
+        "qr_png_base64": base64.b64encode(buf.getvalue()).decode(),
+    }
+
+
+@router.post("/totp/confirm")
+async def totp_confirm(body: TotpConfirm, request: Request) -> dict:
+    with SessionLocal() as db:
+        s = db.get(AppSettings, 1)
+        if not s.totp_pending_secret:
+            raise HTTPException(400, "no pending TOTP setup — call /totp/setup first")
+        if not verify_code(s.totp_pending_secret, body.code):
+            raise HTTPException(400, "invalid code")
+        s.totp_secret = s.totp_pending_secret
+        s.totp_pending_secret = None
+        db.commit()
+    # Spec §5.2: invalidate all sessions after TOTP activation.
+    invalidate_all()
+    return {"ok": True, "note": "TOTP activated; please log in again"}
