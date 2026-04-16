@@ -14,12 +14,14 @@ from app.config import settings as env
 from app.db import SessionLocal
 from app.models.settings import AppSettings
 from app.schemas.auth import LoginRequest
+from app.security.rate_limit import limiter
 
 router = APIRouter(prefix="/api/auth")
 
 
 @router.post("/login")
-async def login(body: LoginRequest, response: Response) -> dict:
+@limiter.limit("5/minute")
+async def login(request: Request, body: LoginRequest, response: Response) -> dict:
     with SessionLocal() as db:
         s = db.get(AppSettings, 1)
         if s is None or not verify_password(body.password, s.password_hash):
