@@ -6,6 +6,7 @@
 
   import { api } from "$lib/api";
   import { formatLong } from "$lib/format";
+  import AudioPlayer from "$lib/components/AudioPlayer.svelte";
   import TagChip from "$lib/components/TagChip.svelte";
 
   marked.setOptions({ gfm: true, breaks: true });
@@ -105,6 +106,7 @@
   <article class="detail">
     <time datetime={entry.entry_date}>{formatLong(entry.entry_date)}</time>
     <h1>{entry.title}</h1>
+    <AudioPlayer text={entry.content} />
     <!-- eslint-disable-next-line svelte/no-at-html-tags -->
     <div class="content markdown">{@html marked.parse(entry.content) as string}</div>
     <div class="tags">
