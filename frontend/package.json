@@ -20,6 +20,7 @@
     "@types/node": "^22",
     "eslint": "^9",
     "eslint-plugin-svelte": "^2",
+    "jsdom": "^29.0.2",
     "svelte": "^5.0",
     "svelte-check": "^4.0",
     "tslib": "^2",
