@@ -43,9 +43,4 @@ class Settings(BaseSettings):
         return v
 
 
-# Module-level instance; wrapped so pytest collection doesn't fail when env
-# vars are not yet set (conftest autouse fixtures run per-test, after collection).
-try:
-    settings = Settings()
-except Exception:
-    settings = None  # type: ignore[assignment]  # lazy: callers must use Settings() directly or check for None
+settings = Settings()  # type: ignore[call-arg]
