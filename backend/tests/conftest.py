@@ -16,7 +16,23 @@ if "DB_PATH" not in os.environ:
 # pytest still needs a fixture interface for individual tests that want to override:
 import pytest
 
+
 @pytest.fixture
 def override_env(monkeypatch):
     """Use in tests that need to set a different DB_ENCRYPTION_KEY, etc."""
     return monkeypatch
+
+
+@pytest.fixture(autouse=True)
+def _reset_rate_limiter():
+    """slowapi keeps in-memory counters across tests; reset between each test."""
+    try:
+        from app.security.rate_limit import limiter
+        limiter.reset()
+    except Exception:
+        pass
+    yield
+
+
+
+
