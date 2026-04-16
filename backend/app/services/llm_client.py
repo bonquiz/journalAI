@@ -3,6 +3,9 @@
 Each capability (stt, chat, embed, tts) gets an independent OpenAI() instance
 with its own base_url / api_key / model, read from the AppSettings row
 (DB override) with ENV defaults as fallback.
+
+If no capability-specific key is set (neither in DB nor ENV) AND the effective
+base_url points at api.openai.com, `OPENAI_API_KEY` is used as a shared fallback.
 """
 from typing import Literal
 
@@ -41,8 +44,19 @@ def get_client(cap: Capability) -> tuple[OpenAI, str]:
         raise ValueError(f"unknown capability: {cap}")
     db_url, db_key, db_model = _db_override(cap)
     d_url, d_key, d_model = _DEFAULTS[cap]
+
     base_url = db_url or d_url
-    # Local servers often require any non-empty string for api_key
-    api_key = db_key or d_key or "unused"
     model = db_model or d_model
+
+    # Resolution order for the key:
+    #   1. DB override (capability-specific)
+    #   2. ENV default  (capability-specific, e.g. STT_API_KEY)
+    #   3. OPENAI_API_KEY — but only if base_url points at OpenAI's API
+    #   4. "unused"      — local servers accept any non-empty string
+    api_key = db_key or d_key
+    if not api_key and "api.openai.com" in (base_url or "") and env.openai_api_key:
+        api_key = env.openai_api_key
+    if not api_key:
+        api_key = "unused"
+
     return OpenAI(base_url=base_url, api_key=api_key), model

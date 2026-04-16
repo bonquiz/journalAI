@@ -17,6 +17,10 @@ class Settings(BaseSettings):
     session_absolute_hours: int = 12
     max_upload_mb: int = 25
 
+    # Optional shared key. If a capability-specific *_api_key is empty AND its
+    # base_url points at api.openai.com, this value is used instead.
+    openai_api_key: str = ""
+
     stt_base_url: str = "https://api.openai.com/v1"
     stt_api_key: str = ""
     stt_model: str = "whisper-1"
@@ -32,6 +36,18 @@ class Settings(BaseSettings):
     tts_base_url: str = "https://api.openai.com/v1"
     tts_api_key: str = ""
     tts_model: str = "tts-1"
+
+    def resolve_api_key(self, capability: str) -> str:
+        """Return the effective API key for a capability.
+        Falls back to OPENAI_API_KEY if the specific key is empty and the base
+        URL points at OpenAI's API."""
+        specific = getattr(self, f"{capability}_api_key", "") or ""
+        if specific:
+            return specific
+        base_url = getattr(self, f"{capability}_base_url", "") or ""
+        if "api.openai.com" in base_url and self.openai_api_key:
+            return self.openai_api_key
+        return ""
 
     @field_validator("db_encryption_key", "session_secret", "secret_key_wrap")
     @classmethod
