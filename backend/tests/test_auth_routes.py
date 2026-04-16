@@ -39,7 +39,12 @@ def test_logout_invalidates_cookie():
     with TestClient(app) as c:
         r = c.post("/api/auth/login", json={"password": "testpw"})
         sid = r.cookies["session"]
-        r2 = c.post("/api/auth/logout", cookies={"session": sid})
+        csrf_val = r.cookies["csrf"]
+        r2 = c.post(
+            "/api/auth/logout",
+            cookies={"session": sid, "csrf": csrf_val},
+            headers={"X-CSRF-Token": csrf_val},
+        )
         assert r2.status_code == 200
         r3 = c.get("/api/entries", cookies={"session": sid})
     assert r3.status_code == 401

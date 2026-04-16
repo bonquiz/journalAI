@@ -28,7 +28,11 @@ def teardown_module():
 def test_setup_returns_secret_and_qr():
     sid = create_session()
     with TestClient(app) as c:
-        r = c.post("/api/auth/totp/setup", cookies={"session": sid})
+        r = c.post(
+            "/api/auth/totp/setup",
+            cookies={"session": sid, "csrf": "tok"},
+            headers={"X-CSRF-Token": "tok"},
+        )
     assert r.status_code == 200
     body = r.json()
     assert "secret" in body
@@ -46,27 +50,47 @@ def test_confirm_without_setup_fails():
         db.commit()
     sid = create_session()
     with TestClient(app) as c:
-        r = c.post("/api/auth/totp/confirm", json={"code": "123456"},
-                   cookies={"session": sid})
+        r = c.post(
+            "/api/auth/totp/confirm",
+            json={"code": "123456"},
+            cookies={"session": sid, "csrf": "tok"},
+            headers={"X-CSRF-Token": "tok"},
+        )
     assert r.status_code == 400
 
 
 def test_confirm_with_invalid_code_fails():
     sid = create_session()
     with TestClient(app) as c:
-        c.post("/api/auth/totp/setup", cookies={"session": sid})
-        r = c.post("/api/auth/totp/confirm", json={"code": "000000"},
-                   cookies={"session": sid})
+        c.post(
+            "/api/auth/totp/setup",
+            cookies={"session": sid, "csrf": "tok"},
+            headers={"X-CSRF-Token": "tok"},
+        )
+        r = c.post(
+            "/api/auth/totp/confirm",
+            json={"code": "000000"},
+            cookies={"session": sid, "csrf": "tok"},
+            headers={"X-CSRF-Token": "tok"},
+        )
     assert r.status_code == 400
 
 
 def test_confirm_activates_and_clears_pending():
     sid = create_session()
     with TestClient(app) as c:
-        setup = c.post("/api/auth/totp/setup", cookies={"session": sid}).json()
+        setup = c.post(
+            "/api/auth/totp/setup",
+            cookies={"session": sid, "csrf": "tok"},
+            headers={"X-CSRF-Token": "tok"},
+        ).json()
         code = pyotp.TOTP(setup["secret"]).now()
-        r = c.post("/api/auth/totp/confirm", json={"code": code},
-                   cookies={"session": sid})
+        r = c.post(
+            "/api/auth/totp/confirm",
+            json={"code": code},
+            cookies={"session": sid, "csrf": "tok"},
+            headers={"X-CSRF-Token": "tok"},
+        )
     assert r.status_code == 200
     with SessionLocal() as db:
         s = db.get(AppSettings, 1)
