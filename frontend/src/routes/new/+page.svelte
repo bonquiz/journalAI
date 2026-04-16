@@ -3,7 +3,9 @@
   import { goto } from "$app/navigation";
   import { api } from "$lib/api";
   import { finalize, streamChat } from "$lib/chat";
+  import AutoPlayToggle from "$lib/components/AutoPlayToggle.svelte";
   import ChatMessage from "$lib/components/ChatMessage.svelte";
+  import PlayMessageButton from "$lib/components/PlayMessageButton.svelte";
   import PreviewModal from "$lib/components/PreviewModal.svelte";
   import Spinner from "$lib/components/Spinner.svelte";
   import TextOrVoiceInput from "$lib/components/TextOrVoiceInput.svelte";
@@ -11,6 +13,8 @@
 
   let input = $state("");
   let streaming = $state(false);
+  let autoPlay = $state(false);
+  let autoplayIndex: number | null = $state(null);
   let finalizing = $state(false);
   let saving = $state(false);
   let preview = $state<{ title: string; content: string; tags: string[]; entry_date: string } | null>(null);
@@ -34,6 +38,14 @@
           m[m.length - 1] = { role: "assistant", content: m[m.length - 1].content + tok };
           return m;
         });
+      }
+      if (autoPlay) {
+        const list = get(chatDraft);
+        const lastIdx = list.length - 1;
+        const last = list[lastIdx];
+        if (last && last.role === "assistant" && last.content.trim()) {
+          autoplayIndex = lastIdx;
+        }
       }
     } catch {
       errorMsg = "Chat fehlgeschlagen.";
@@ -74,9 +86,19 @@
 </script>
 
 <h1>Neuer Eintrag</h1>
+<AutoPlayToggle bind:value={autoPlay} />
 
 {#each $chatDraft as m, i (i)}
-  <ChatMessage role={m.role} content={m.content} />
+  <ChatMessage role={m.role} content={m.content}>
+    {#snippet children()}
+      {#if m.role === "assistant" && m.content.trim()}
+        <PlayMessageButton
+          text={m.content}
+          autoplay={autoplayIndex === i}
+        />
+      {/if}
+    {/snippet}
+  </ChatMessage>
 {/each}
 
 {#if streaming}

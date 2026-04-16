@@ -1,20 +1,30 @@
 <script lang="ts">
   import { marked } from "marked";
 
-  const { role, content }: { role: string; content: string } = $props();
+  let {
+    role,
+    content,
+    children,
+  }: {
+    role: string;
+    content: string;
+    children?: import("svelte").Snippet;
+  } = $props();
 
-  // Configure: GitHub-flavored markdown, line breaks preserved.
   marked.setOptions({ gfm: true, breaks: true });
 
-  // Assistant messages are rendered as Markdown. User messages stay plain
-  // so what was typed is what is shown (no surprises).
   const rendered = $derived(
     role === "assistant" ? (marked.parse(content) as string) : content,
   );
 </script>
 
 <article class="msg {role}">
-  <header>{role === "user" ? "Du" : "Assistent"}</header>
+  <header>
+    <span>{role === "user" ? "Du" : "Assistent"}</span>
+    {#if children}
+      <span class="actions">{@render children()}</span>
+    {/if}
+  </header>
   {#if role === "assistant"}
     <!-- eslint-disable-next-line svelte/no-at-html-tags -->
     <div class="body markdown">{@html rendered}</div>
@@ -27,7 +37,17 @@
   .msg { margin: 0.75rem 0; padding: 0.75rem 1rem; border-radius: var(--radius); }
   .msg.user { background: #eef2f6; }
   .msg.assistant { background: #f5f7fa; }
-  .msg header { font-weight: 600; font-size: 0.85em; color: var(--muted); margin-bottom: 0.25rem; }
+  .msg header {
+  font-weight: 600;
+  font-size: 0.85em;
+  color: var(--muted);
+  margin-bottom: 0.25rem;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 0.5rem;
+}
+.msg header .actions { display: inline-flex; }
   .body.plain { white-space: pre-wrap; }
   .body.markdown :global(h1),
   .body.markdown :global(h2),
