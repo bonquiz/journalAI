@@ -1,0 +1,14 @@
+name: build
+on: [push, pull_request]
+
+jobs:
+  docker:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build backend image
+        run: docker build -t journalai-backend:ci backend/
+
+      - name: Build frontend image
+        run: docker build -t journalai-frontend:ci frontend/

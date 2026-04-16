@@ -1,0 +1,32 @@
+name: backend-test
+on: [push, pull_request]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install system deps (SQLCipher)
+        run: sudo apt-get update && sudo apt-get install -y libsqlcipher-dev sqlcipher pkg-config build-essential
+
+      - name: Install Python deps
+        run: pip install -e ".[dev]"
+
+      - name: Lint
+        run: ruff check .
+
+      - name: Test
+        env:
+          APP_PASSWORD: testpw
+          DB_ENCRYPTION_KEY: "a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0"
+          SESSION_SECRET:   "b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0"
+          SECRET_KEY_WRAP:  "c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0"
+        run: pytest -q --cov=app
