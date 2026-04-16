@@ -7,9 +7,12 @@ Future tasks will add CsrfMiddleware, SlowAPIMiddleware — order matters.
 from fastapi import FastAPI
 
 from app.auth.middleware import SessionAuthMiddleware
+from app.routes.auth import router as auth_router
 
 app = FastAPI(title="journalAI", docs_url=None, redoc_url=None)
 app.add_middleware(SessionAuthMiddleware)
+
+app.include_router(auth_router)
 
 
 @app.get("/api/health")
