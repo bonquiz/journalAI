@@ -1,0 +1,8 @@
+node_modules
+.svelte-kit
+dist
+build
+tests
+coverage
+playwright-report
+.env
