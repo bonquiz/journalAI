@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { onMount } from "svelte";
   import { goto } from "$app/navigation";
   import { session } from "$lib/stores/session";
 
@@ -6,6 +7,13 @@
   let totp = $state("");
   let error: string | null = $state(null);
   let submitting = $state(false);
+  let passwordInput: HTMLInputElement | undefined = $state();
+
+  onMount(() => {
+    // Setting focus via onMount avoids the a11y_autofocus warning
+    // while still placing focus on the password field for quick login.
+    passwordInput?.focus();
+  });
 
   async function submit(e: SubmitEvent) {
     e.preventDefault();
@@ -26,7 +34,7 @@
   <h1>Anmelden</h1>
   <label>
     Passwort
-    <input type="password" bind:value={password} required autofocus />
+    <input type="password" bind:value={password} bind:this={passwordInput} required />
   </label>
   <label>
     TOTP (falls aktiv)

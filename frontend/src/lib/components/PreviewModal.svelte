@@ -96,11 +96,15 @@
   .modal label { display: flex; flex-direction: column; gap: 0.25rem; }
   .tags { display: flex; flex-wrap: wrap; align-items: center; }
   .tag-input { width: 8rem; }
-  footer { display: flex; gap: 0.5rem; justify-content: flex-end; align-items: center; }
+  footer { display: flex; gap: 0.5rem; justify-content: flex-end; align-items: center; flex-wrap: wrap; }
   footer .primary {
     display: inline-flex;
     align-items: center;
     gap: 0.4rem;
   }
   footer button:disabled { opacity: 0.7; cursor: progress; }
+  footer button { flex: 1 1 auto; min-width: 10rem; }
+  @media (max-width: 500px) {
+    footer button { flex: 1 1 100%; }
+  }
 </style>

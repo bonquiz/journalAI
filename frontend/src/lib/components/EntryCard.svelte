@@ -1,4 +1,6 @@
 <script lang="ts">
+  import { formatLong } from "$lib/format";
+
   const { e }: {
     e: { id: string; title: string; entry_date: string; content: string; tags: string[] };
   } = $props();
@@ -7,7 +9,7 @@
 </script>
 
 <a href={`/entries/${e.id}`} class="card">
-  <time>{e.entry_date}</time>
+  <time datetime={e.entry_date}>{formatLong(e.entry_date)}</time>
   <h3>{e.title}</h3>
   <p>{getExcerpt(e.content)}</p>
   <div class="tags">

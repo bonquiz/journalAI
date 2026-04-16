@@ -5,6 +5,7 @@
   import { marked } from "marked";
 
   import { api } from "$lib/api";
+  import { formatLong } from "$lib/format";
   import TagChip from "$lib/components/TagChip.svelte";
 
   marked.setOptions({ gfm: true, breaks: true });
@@ -102,7 +103,7 @@
 
 {#if entry && !editing}
   <article class="detail">
-    <time>{entry.entry_date}</time>
+    <time datetime={entry.entry_date}>{formatLong(entry.entry_date)}</time>
     <h1>{entry.title}</h1>
     <!-- eslint-disable-next-line svelte/no-at-html-tags -->
     <div class="content markdown">{@html marked.parse(entry.content) as string}</div>

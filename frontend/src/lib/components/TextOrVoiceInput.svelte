@@ -38,5 +38,6 @@
 <style>
   .tovi { display: flex; flex-direction: column; gap: 0.5rem; }
   textarea { width: 100%; resize: vertical; font-family: inherit; }
-  .controls { display: flex; gap: 0.5rem; }
+  .controls { display: flex; gap: 0.5rem; flex-wrap: wrap; }
+  .controls :global(button) { flex: 1 1 auto; min-width: 8rem; }
 </style>

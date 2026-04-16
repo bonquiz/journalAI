@@ -74,10 +74,18 @@
 </div>
 
 <style>
-  form { display: flex; gap: 0.5rem; margin: 1rem 0; }
-  form input { flex: 1; }
-  .tags { display: flex; flex-wrap: wrap; gap: 0.25rem; margin-bottom: 1rem; }
-  .tag-btn { background: #e8ecf1; color: var(--fg); font-size: 0.85em; padding: 0.2rem 0.6rem; }
+  form { display: flex; gap: 0.5rem; margin: 1rem 0; flex-wrap: wrap; }
+  form input { flex: 1 1 12rem; min-width: 0; }
+  form button { flex: 0 0 auto; }
+  .tags { display: flex; flex-wrap: wrap; gap: 0.35rem; margin-bottom: 1rem; }
+  .tag-btn {
+    background: #e8ecf1;
+    color: var(--fg);
+    font-size: 0.85em;
+    padding: 0.35rem 0.7rem;
+    min-height: 36px;
+    border-radius: 999px;
+  }
   .tag-btn.active { background: var(--accent); color: #fff; }
   .muted { color: var(--muted); font-style: italic; }
 </style>

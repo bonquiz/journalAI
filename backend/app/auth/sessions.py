@@ -11,18 +11,19 @@ Session lifecycle:
   (used after password change / TOTP activation per spec §5.2).
 """
 import secrets
-from datetime import datetime, timedelta
+from datetime import timedelta
 
 from app.config import settings
 from app.db import SessionLocal
 from app.models.session import AppSession
+from app.utc import utc_now
 
 _TOUCH_INTERVAL = timedelta(seconds=30)
 
 
 def create_session() -> str:
     sid = secrets.token_urlsafe(48)
-    now = datetime.utcnow()
+    now = utc_now()
     with SessionLocal() as db:
         db.add(
             AppSession(
@@ -43,7 +44,7 @@ def get_active_session(sid: str) -> AppSession | None:
         s = db.get(AppSession, sid)
         if s is None:
             return None
-        now = datetime.utcnow()
+        now = utc_now()
         idle_limit = timedelta(minutes=settings.session_idle_minutes)
         if now - s.last_activity_at > idle_limit or now > s.expires_at:
             db.delete(s)
@@ -58,7 +59,7 @@ def touch_session(sid: str) -> None:
         s = db.get(AppSession, sid)
         if s is None:
             return
-        now = datetime.utcnow()
+        now = utc_now()
         if now - s.last_activity_at > _TOUCH_INTERVAL:
             s.last_activity_at = now
             db.commit()

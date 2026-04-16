@@ -1,5 +1,4 @@
 import json
-from datetime import datetime
 
 from fastapi import APIRouter, HTTPException, Query
 from sqlalchemy import func, select
@@ -8,6 +7,7 @@ from app.db import SessionLocal
 from app.models.entry import Entry
 from app.models.tag import EntryTag, Tag
 from app.schemas.entries import EntryCreate, EntryDetail, EntryOut, EntryUpdate, new_id
+from app.utc import utc_now
 
 router = APIRouter(prefix="/api/entries")
 
@@ -123,7 +123,7 @@ async def update_entry(eid: str, body: EntryUpdate) -> dict:
             _ensure_tags(db, body.tags)
             for n in set(body.tags):
                 db.add(EntryTag(entry_id=eid, tag_name=n))
-        e.updated_at = datetime.utcnow()
+        e.updated_at = utc_now()
         db.commit()
         db.refresh(e)
         return _to_detail(e)
