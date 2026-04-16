@@ -1,3 +1,4 @@
+import { clearCache as clearTtsCache } from "$lib/tts";
 import { writable } from "svelte/store";
 
 type SessionState = {
@@ -76,6 +77,7 @@ function createSession() {
       credentials: "same-origin",
       headers: { "X-CSRF-Token": csrf },
     });
+    clearTtsCache();
     stopTicking();
     set({ authenticated: false, idleSecondsLeft: IDLE_LIMIT_S });
     if (typeof window !== "undefined") window.location.href = "/login";

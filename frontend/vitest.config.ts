@@ -7,5 +7,5 @@ export default defineConfig({
   resolve: {
     alias: { $lib: path.resolve("./src/lib") },
   },
-  test: { environment: "jsdom", include: ["tests/unit/**/*.test.ts"] },
+  test: { environment: "jsdom", include: ["tests/unit/**/*.test.ts"], setupFiles: ["tests/setup.ts"] },
 });
