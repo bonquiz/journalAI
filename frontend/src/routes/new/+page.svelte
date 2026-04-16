@@ -5,17 +5,22 @@
   import { finalize, streamChat } from "$lib/chat";
   import ChatMessage from "$lib/components/ChatMessage.svelte";
   import PreviewModal from "$lib/components/PreviewModal.svelte";
+  import Spinner from "$lib/components/Spinner.svelte";
   import TextOrVoiceInput from "$lib/components/TextOrVoiceInput.svelte";
   import { chatDraft, resetChatDraft } from "$lib/stores/chatDraft";
 
   let input = $state("");
   let streaming = $state(false);
+  let finalizing = $state(false);
+  let saving = $state(false);
   let preview = $state<{ title: string; content: string; tags: string[]; entry_date: string } | null>(null);
   let rawTranscript = $state<string | null>(null);
   let errorMsg: string | null = $state(null);
 
+  const busy = $derived(streaming || finalizing || saving);
+
   async function send() {
-    if (!input.trim() || streaming) return;
+    if (!input.trim() || busy) return;
     errorMsg = null;
     const userMsg = { role: "user" as const, content: input };
     if (!rawTranscript) rawTranscript = input;
@@ -39,23 +44,32 @@
 
   async function save() {
     errorMsg = null;
+    finalizing = true;
     try {
       const msgs = get(chatDraft).map((m) => ({ role: m.role, content: m.content }));
       preview = await finalize(msgs);
     } catch {
       errorMsg = "Finalisieren fehlgeschlagen.";
+    } finally {
+      finalizing = false;
     }
   }
 
   async function confirm() {
     if (!preview) return;
-    const chat = get(chatDraft).map((m) => ({ role: m.role, content: m.content }));
-    await api("/api/entries", {
-      method: "POST",
-      body: { ...preview, raw_transcript: rawTranscript, chat_history: chat },
-    });
-    resetChatDraft();
-    goto("/entries");
+    saving = true;
+    try {
+      const chat = get(chatDraft).map((m) => ({ role: m.role, content: m.content }));
+      await api("/api/entries", {
+        method: "POST",
+        body: { ...preview, raw_transcript: rawTranscript, chat_history: chat },
+      });
+      resetChatDraft();
+      goto("/entries");
+    } catch {
+      errorMsg = "Speichern fehlgeschlagen.";
+      saving = false;
+    }
   }
 </script>
 
@@ -65,25 +79,50 @@
   <ChatMessage role={m.role} content={m.content} />
 {/each}
 
+{#if streaming}
+  <p class="status"><Spinner label="Assistent antwortet" /> <span>Assistent schreibt…</span></p>
+{/if}
+
 <TextOrVoiceInput bind:value={input} placeholder="Diktat oder Text…" onsubmit={send} />
 
 {#if errorMsg}<p class="err">{errorMsg}</p>{/if}
 
-{#if $chatDraft.length >= 2 && !streaming}
-  <button type="button" onclick={save} class="save-btn">
-    Eintrag jetzt speichern
+{#if $chatDraft.length >= 2}
+  <button type="button" onclick={save} class="save-btn" disabled={busy}>
+    {#if finalizing}
+      <Spinner label="Eintrag wird strukturiert" /> <span>Strukturiere Eintrag…</span>
+    {:else}
+      Eintrag jetzt speichern
+    {/if}
   </button>
 {/if}
 
 {#if preview}
   <PreviewModal
     bind:entry={preview}
+    {saving}
     oncancel={() => (preview = null)}
     onconfirm={confirm}
   />
 {/if}
 
 <style>
-  .save-btn { margin-top: 1rem; width: 100%; }
+  .save-btn {
+    margin-top: 1rem;
+    width: 100%;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.5rem;
+  }
+  .save-btn:disabled { opacity: 0.7; cursor: progress; }
+  .status {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    color: var(--muted);
+    margin: 0.5rem 0.25rem;
+    font-size: 0.9em;
+  }
   .err { color: #b22; }
 </style>

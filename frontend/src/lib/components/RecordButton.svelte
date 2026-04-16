@@ -1,5 +1,6 @@
 <script lang="ts">
   import { Recorder, transcribe } from "$lib/audio";
+  import Spinner from "./Spinner.svelte";
 
   const { oninsert }: { oninsert: (text: string) => void } = $props();
 
@@ -44,11 +45,23 @@
   disabled={loading}
   class:recording={active}
 >
-  {#if loading}…{:else if active}■ Stopp{:else}● Mic{/if}
+  {#if loading}
+    <Spinner label="Transkribiere" /> <span>Transkribiere…</span>
+  {:else if active}
+    ■ Stopp
+  {:else}
+    ● Mic
+  {/if}
 </button>
 {#if error}<span class="err">{error}</span>{/if}
 
 <style>
+  button {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.4rem;
+  }
   button.recording { background: #c33; }
+  button:disabled { opacity: 0.8; cursor: progress; }
   .err { color: #b22; margin-left: 0.5rem; font-size: 0.9em; }
 </style>
