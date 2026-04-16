@@ -9,6 +9,7 @@ from fastapi.responses import JSONResponse
 from app.auth.middleware import SessionAuthMiddleware
 from app.bootstrap import ensure_bootstrap
 from app.routes.auth import router as auth_router
+from app.routes.transcribe import router as transcribe_router
 from app.security.csrf import CsrfMiddleware
 from app.security.rate_limit import limiter
 from slowapi.errors import RateLimitExceeded
@@ -31,6 +32,7 @@ async def _startup() -> None:
     ensure_bootstrap()
 
 app.include_router(auth_router)
+app.include_router(transcribe_router)
 
 
 @app.get("/api/health")
