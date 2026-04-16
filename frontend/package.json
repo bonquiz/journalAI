@@ -17,6 +17,8 @@
     "@sveltejs/adapter-static": "^3.0",
     "@sveltejs/kit": "^2.7",
     "@sveltejs/vite-plugin-svelte": "^4.0",
+    "@testing-library/jest-dom": "^6.9.1",
+    "@testing-library/svelte": "^5.3.1",
     "@types/node": "^22",
     "eslint": "^9",
     "eslint-plugin-svelte": "^2",
