@@ -55,3 +55,87 @@ def extract_search_intent(query: str) -> str:
     except Exception as exc:
         log.warning("extract_search_intent failed, falling back: %s", exc)
         return query
+
+
+RERANK_PROMPT = (
+    "Du bekommst eine Nutzeranfrage und eine Liste von Tagebucheintrag-"
+    "Kandidaten (id, title, snippet). Bewerte jeden Kandidaten mit einem "
+    "Score von 0 bis 100 für die inhaltliche Relevanz zur Anfrage und "
+    "beschreibe in einem kurzen Satz (max. 120 Zeichen) warum. "
+    'Antworte AUSSCHLIESSLICH mit JSON der Form '
+    '{"results":[{"id":"...","score":0-100,"reason":"..."}]}. '
+    "Keine Erklärung, kein Markdown, kein Text drumherum."
+)
+
+
+def _excerpt(text: str, limit: int = 200) -> str:
+    return text[:limit] + ("…" if len(text) > limit else "")
+
+
+def _cosine_fallback(candidates: list, top_k: int) -> list[RerankedResult]:
+    return [
+        RerankedResult(
+            entry_id=c.id,
+            title=c.title,
+            excerpt=_excerpt(c.content),
+            score=0.0,
+            reason=None,
+        )
+        for c in candidates[:top_k]
+    ]
+
+
+def rerank_results(query: str, candidates: list, top_k: int) -> list[RerankedResult]:
+    """LLM-rerank. Falls back to cosine-order + reason=None on any failure."""
+    if not candidates:
+        return []
+
+    try:
+        client, model = get_client("chat")
+        payload = [
+            {"id": c.id, "title": c.title, "snippet": _excerpt(c.content, 300)}
+            for c in candidates
+        ]
+        resp = client.chat.completions.create(
+            model=model,
+            temperature=0.0,
+            response_format={"type": "json_object"},
+            messages=[
+                {"role": "system", "content": RERANK_PROMPT},
+                {
+                    "role": "user",
+                    "content": f"Anfrage: {query}\n\nKandidaten: {json.dumps(payload, ensure_ascii=False)}",
+                },
+            ],
+        )
+        raw = (resp.choices[0].message.content or "").strip()
+        parsed = json.loads(raw)
+        if isinstance(parsed, dict):
+            arr = parsed.get("results") or parsed.get("items") or next(
+                (v for v in parsed.values() if isinstance(v, list)), None
+            )
+        else:
+            arr = parsed
+        if not isinstance(arr, list):
+            raise ValueError("rerank response not a list")
+
+        by_id = {c.id: c for c in candidates}
+        out: list[RerankedResult] = []
+        for item in arr:
+            cid = item.get("id")
+            cand = by_id.get(cid)
+            if cand is None:
+                continue
+            out.append(RerankedResult(
+                entry_id=cid,
+                title=cand.title,
+                excerpt=_excerpt(cand.content),
+                score=float(item.get("score", 0)),
+                reason=item.get("reason"),
+            ))
+        if not out:
+            return _cosine_fallback(candidates, top_k)
+        return out[:top_k]
+    except Exception as exc:
+        log.warning("rerank_results failed, using cosine order: %s", exc)
+        return _cosine_fallback(candidates, top_k)
