@@ -31,6 +31,30 @@ See:
 - `docs/endpoint-compatibility.md` — which AI providers/servers work
 - `docs/hardware-profiles.md` — recommended hardware for local-only setups
 
+## E2E-Tests live ausführen
+
+Die Playwright-Specs unter `frontend/tests/e2e/` sind standardmäßig per `test.skip(!E2E_LIVE)`
+deaktiviert, weil sie echte Requests an OpenAI-kompatible Endpoints senden (Kosten, Latenz).
+
+**Voraussetzungen:**
+- Backend und Frontend laufen lokal (`docker compose -f deploy/docker-compose.yml up -d`).
+- Ein Seed-User existiert (`APP_PASSWORD` aus `deploy/.env`).
+- Ein OpenAI-kompatibler Endpoint ist erreichbar.
+
+**Lauf:**
+
+```bash
+cd frontend
+E2E_LIVE=1 \
+  OPENAI_API_KEY=sk-... \
+  OPENAI_BASE_URL=https://api.openai.com/v1 \
+  npx playwright test
+```
+
+**Hinweis:** Live-Läufe erzeugen echte Kosten/Requests gegen den konfigurierten Provider.
+Für die normale lokale Entwicklung genügt der Default-Skip; CI führt ebenfalls nur die
+gated Specs ohne `E2E_LIVE` aus.
+
 ## Privacy
 
 No journal data, audio, or secrets are ever committed to this repository.
