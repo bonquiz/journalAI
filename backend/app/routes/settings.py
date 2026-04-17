@@ -6,6 +6,7 @@ from app.auth.sessions import invalidate_all
 from app.crypto import unwrap_secret, wrap_secret
 from app.db import SessionLocal
 from app.models.entry import Entry
+from app.models.entry_embedding import EntryEmbedding
 from app.models.settings import AppSettings
 from app.schemas.settings import PasswordChange, SettingsOut, SettingsPatch
 
@@ -88,9 +89,8 @@ async def update_settings(body: SettingsPatch) -> dict:
             and old_embed_model != new_embed_model
         ):
             affected = int(db.scalar(
-                select(func.count()).select_from(Entry).where(
-                    Entry.embedding_model.is_not(None),
-                    Entry.embedding_model != new_embed_model,
+                select(func.count()).select_from(EntryEmbedding).where(
+                    EntryEmbedding.model != new_embed_model,
                 )
             ) or 0)
             if affected > 0:

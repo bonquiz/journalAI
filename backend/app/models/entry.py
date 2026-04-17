@@ -1,6 +1,6 @@
 from datetime import date, datetime
 
-from sqlalchemy import Date, DateTime, LargeBinary, String, Text, func
+from sqlalchemy import Date, DateTime, String, Text, func
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db import Base
@@ -15,9 +15,6 @@ class Entry(Base):
     content: Mapped[str] = mapped_column(Text, nullable=False)
     raw_transcript: Mapped[str | None] = mapped_column(Text)
     chat_history: Mapped[str | None] = mapped_column(Text)
-    embedding: Mapped[bytes | None] = mapped_column(LargeBinary)
-    embedding_model: Mapped[str | None] = mapped_column(String)
-    embedding_updated_at: Mapped[datetime | None] = mapped_column(DateTime)
     created_at: Mapped[datetime] = mapped_column(
         DateTime, server_default=func.current_timestamp(), nullable=False
     )
