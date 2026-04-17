@@ -10,7 +10,7 @@ from app.db import Base, SessionLocal, engine
 from app.main import app
 from app.models.entry import Entry
 from app.models.settings import AppSettings
-from app.services.embeddings import pack_vector
+from app.services.embeddings import save_embedding_vector
 from app.services.search import RerankedResult, SemanticSearchResponse
 
 HEADERS = {"x-csrf-token": "t"}
@@ -93,13 +93,12 @@ def _seed(with_emb: int, without_emb: int, model: str):
     with SessionLocal() as db:
         db.query(Entry).delete()
         for i in range(with_emb):
-            db.add(Entry(
-                id=f"w{i}", entry_date=date(2026, 4, 1), title=f"w{i}", content="c",
-                embedding=pack_vector(np.array([1.0], dtype=np.float32)),
-                embedding_model=model,
-            ))
+            db.add(Entry(id=f"w{i}", entry_date=date(2026, 4, 1), title=f"w{i}", content="c"))
         for i in range(without_emb):
             db.add(Entry(id=f"n{i}", entry_date=date(2026, 4, 1), title=f"n{i}", content="c"))
+        db.commit()
+        for i in range(with_emb):
+            save_embedding_vector(db, f"w{i}", model, np.array([1.0], dtype=np.float32))
         db.commit()
 
 

@@ -6,6 +6,7 @@ from sqlalchemy import func, select
 
 from app.db import SessionLocal
 from app.models.entry import Entry
+from app.models.entry_embedding import EntryEmbedding
 from app.security.rate_limit import limiter
 from app.services.embedding_jobs import is_job_running, request_reindex
 from app.services.llm_client import resolved_model
@@ -41,12 +42,14 @@ async def search_status() -> dict:
     current = resolved_model("embed")
     with SessionLocal() as db:
         total = int(db.scalar(select(func.count()).select_from(Entry)) or 0)
-        embedded = int(db.scalar(
-            select(func.count()).select_from(Entry).where(
-                Entry.embedding.is_not(None),
-                Entry.embedding_model == current,
-            )
-        ) or 0)
+        if current:
+            embedded = int(db.scalar(
+                select(func.count())
+                .select_from(EntryEmbedding)
+                .where(EntryEmbedding.model == current)
+            ) or 0)
+        else:
+            embedded = 0
     return {
         "total": total,
         "embedded": embedded,
