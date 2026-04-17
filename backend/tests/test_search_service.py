@@ -93,7 +93,7 @@ from fastapi import HTTPException
 
 from app.models.entry import Entry
 from app.models.settings import AppSettings
-from app.services.embeddings import pack_vector
+from app.services.embeddings import pack_vector, save_embedding_vector
 
 
 def _reset_entries():
@@ -108,21 +108,13 @@ def test_semantic_search_end_to_end():
     with SessionLocal() as db:
         s = db.get(AppSettings, 1)
         s.embed_model = "m1"
-        db.add(Entry(
-            id="e1", entry_date=date(2026, 4, 1), title="Regenbogen", content="Regenbögen.",
-            embedding=pack_vector(_np.array([1.0, 0.0, 0.0], dtype=_np.float32)),
-            embedding_model="m1",
-        ))
-        db.add(Entry(
-            id="e2", entry_date=date(2026, 4, 1), title="Auto", content="Neues Auto.",
-            embedding=pack_vector(_np.array([0.0, 1.0, 0.0], dtype=_np.float32)),
-            embedding_model="m1",
-        ))
-        db.add(Entry(
-            id="e3", entry_date=date(2026, 4, 1), title="Old", content="alt",
-            embedding=pack_vector(_np.array([1.0, 0.0, 0.0], dtype=_np.float32)),
-            embedding_model="old",
-        ))
+        db.add(Entry(id="e1", entry_date=date(2026, 4, 1), title="Regenbogen", content="Regenbögen."))
+        db.add(Entry(id="e2", entry_date=date(2026, 4, 1), title="Auto", content="Neues Auto."))
+        db.add(Entry(id="e3", entry_date=date(2026, 4, 1), title="Old", content="alt"))
+        db.commit()
+        save_embedding_vector(db, "e1", "m1", _np.array([1.0, 0.0, 0.0], dtype=_np.float32))
+        save_embedding_vector(db, "e2", "m1", _np.array([0.0, 1.0, 0.0], dtype=_np.float32))
+        save_embedding_vector(db, "e3", "old", _np.array([1.0, 0.0, 0.0], dtype=_np.float32))
         db.commit()
 
     intent = httpx.Response(200, json={"choices": [{"message": {"content": "Regenbogen"}}], "model": "c"})
@@ -187,11 +179,9 @@ def test_semantic_search_filters_dimension_mismatches():
         s = db.get(AppSettings, 1)
         s.embed_model = "m1"
         # All entries have model=m1 but wrong dimension (2 instead of 3)
-        db.add(Entry(
-            id="w1", entry_date=date(2026, 4, 1), title="w", content="c",
-            embedding=pack_vector(_np.array([1.0, 0.0], dtype=_np.float32)),
-            embedding_model="m1",
-        ))
+        db.add(Entry(id="w1", entry_date=date(2026, 4, 1), title="w", content="c"))
+        db.commit()
+        save_embedding_vector(db, "w1", "m1", _np.array([1.0, 0.0], dtype=_np.float32))
         db.commit()
 
     intent = httpx.Response(200, json={"choices": [{"message": {"content": "x"}}], "model": "c"})
@@ -213,11 +203,9 @@ def test_semantic_search_surfaces_embed_502():
     with SessionLocal() as db:
         s = db.get(AppSettings, 1)
         s.embed_model = "m1"
-        db.add(Entry(
-            id="ok", entry_date=date(2026, 4, 1), title="t", content="c",
-            embedding=pack_vector(_np.array([1.0], dtype=_np.float32)),
-            embedding_model="m1",
-        ))
+        db.add(Entry(id="ok", entry_date=date(2026, 4, 1), title="t", content="c"))
+        db.commit()
+        save_embedding_vector(db, "ok", "m1", _np.array([1.0], dtype=_np.float32))
         db.commit()
 
     intent = httpx.Response(200, json={"choices": [{"message": {"content": "x"}}], "model": "c"})
