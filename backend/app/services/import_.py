@@ -51,6 +51,7 @@ from sqlalchemy.orm import Session
 from app.models.entry import Entry as EntryModel
 from app.models.tag import EntryTag, Tag as TagModel
 from app.schemas.entries import new_id as new_entry_id
+from app.services.embeddings import delete_embeddings_for_entry
 from app.utc import utc_now
 
 VALID_MODES = {"skip", "copy", "overwrite"}
@@ -173,9 +174,7 @@ def run_import(
                 existing.raw_transcript = raw_transcript
                 existing.chat_history = chat_history_json
                 existing.updated_at = utc_now()
-                existing.embedding = None
-                existing.embedding_model = None
-                existing.embedding_updated_at = None
+                delete_embeddings_for_entry(db, eid)
                 db.flush()
                 _set_entry_tags(db, eid, tags)
                 continue

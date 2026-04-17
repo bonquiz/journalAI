@@ -7,8 +7,10 @@ import pytest
 from app.auth.password import hash_password
 from app.db import Base, SessionLocal, engine
 from app.models.entry import Entry
+from app.models.entry_embedding import EntryEmbedding
 from app.models.settings import AppSettings
 from app.models.tag import EntryTag, Tag
+from app.services.embeddings import save_embedding_vector
 from app.services.import_ import ImportError as AppImportError, parse_export_zip
 
 
@@ -198,7 +200,7 @@ def test_run_import_copy_creates_new_entry_on_conflict():
 
 
 def test_run_import_overwrite_replaces_and_invalidates_embedding():
-    from datetime import datetime
+    import numpy as np
     _clear()
     existing_id = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"
     with SessionLocal() as db:
@@ -206,10 +208,9 @@ def test_run_import_overwrite_replaces_and_invalidates_embedding():
             id=existing_id,
             entry_date=date(2026, 4, 1),
             title="ORIGINAL", content="orig",
-            embedding=b"\x00\x01\x02",
-            embedding_model="old-model",
-            embedding_updated_at=datetime(2026, 1, 1),
         ))
+        db.commit()
+        save_embedding_vector(db, existing_id, "old-model", np.array([0.1, 0.2], dtype=np.float32))
         db.commit()
         result = run_import(db, _valid_payload(), mode="overwrite", dry_run=False)
 
@@ -220,13 +221,11 @@ def test_run_import_overwrite_replaces_and_invalidates_embedding():
         e = db.get(Entry, existing_id)
         assert e.title == "T"
         assert e.content == "C"
-        assert e.embedding is None
-        assert e.embedding_model is None
-        assert e.embedding_updated_at is None
+        assert db.query(EntryEmbedding).filter_by(entry_id=existing_id).count() == 0
 
 
 def test_run_import_overwrite_dry_run_does_not_mutate():
-    from datetime import datetime
+    import numpy as np
     _clear()
     existing_id = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"
     with SessionLocal() as db:
@@ -234,17 +233,17 @@ def test_run_import_overwrite_dry_run_does_not_mutate():
             id=existing_id,
             entry_date=date(2026, 4, 1),
             title="ORIGINAL", content="orig",
-            embedding=b"\x00\x01\x02",
-            embedding_model="old-model",
         ))
+        db.commit()
+        save_embedding_vector(db, existing_id, "old-model", np.array([0.1, 0.2], dtype=np.float32))
         db.commit()
         run_import(db, _valid_payload(), mode="overwrite", dry_run=True)
 
     with SessionLocal() as db:
         e = db.get(Entry, existing_id)
         assert e.title == "ORIGINAL"
-        assert e.embedding == b"\x00\x01\x02"
-        assert e.embedding_model == "old-model"
+        row = db.get(EntryEmbedding, (existing_id, "old-model"))
+        assert row is not None
 
 
 def test_validation_collects_errors_but_continues():
