@@ -14,19 +14,19 @@ from __future__ import annotations
 import asyncio
 import logging
 
-from sqlalchemy import or_, select
+from sqlalchemy import select
 
 from app.db import SessionLocal
 from app.models.entry import Entry
+from app.models.entry_embedding import EntryEmbedding
 from app.models.settings import AppSettings
 from app.services.embeddings import (
     ProviderRateLimited,
     build_entry_text,
     embed_text,
-    pack_vector,
+    save_embedding_vector,
 )
 from app.services.llm_client import resolved_model
-from app.utc import utc_now
 
 log = logging.getLogger(__name__)
 
@@ -77,14 +77,11 @@ def embed_entry_async(entry_id: str) -> None:
         )
         return
 
-    blob = pack_vector(vec)
     with SessionLocal() as db:
         e = db.get(Entry, entry_id)
         if e is None:
             return  # deleted between embed + write
-        e.embedding = blob
-        e.embedding_model = resolved_model
-        e.embedding_updated_at = utc_now()
+        save_embedding_vector(db, entry_id, resolved_model, vec)
         s = db.get(AppSettings, 1)
         # embed_dimensions: set only initially, never silently overwrite
         if s is not None:
@@ -137,7 +134,7 @@ def is_job_running() -> bool:
 
 
 async def _do_backfill() -> None:
-    """Embed all entries where embedding is NULL or embedding_model != current.
+    """Embed all entries that have no row in entry_embeddings for the current model.
     Ordered by updated_at DESC so the freshest entries become searchable first.
     """
     current = _current_embed_model()
@@ -146,17 +143,13 @@ async def _do_backfill() -> None:
         return
 
     with SessionLocal() as db:
-        # NULL-safe: SQL `embedding_model != current` is NULL (not TRUE) when
-        # embedding_model is NULL, so we must handle that branch explicitly.
+        subq = (
+            select(EntryEmbedding.entry_id)
+            .where(EntryEmbedding.model == current)
+        )
         ids = db.execute(
             select(Entry.id)
-            .where(
-                or_(
-                    Entry.embedding.is_(None),
-                    Entry.embedding_model.is_(None),
-                    Entry.embedding_model != current,
-                )
-            )
+            .where(Entry.id.notin_(subq))
             .order_by(Entry.updated_at.desc())
         ).scalars().all()
 
@@ -188,18 +181,11 @@ async def _embed_one_with_backoff(entry_id: str) -> None:
 
 
 async def _do_reindex() -> None:
-    """Null all embeddings, then do a full backfill. Runs under the same lock
-    as backfill — no release+reacquire race."""
+    """Delete all entry_embeddings rows, then do a full backfill. Runs under the
+    same lock as backfill — no release+reacquire race."""
     log.info("_do_reindex: clearing all embeddings")
     with SessionLocal() as db:
-        db.query(Entry).update(
-            {
-                Entry.embedding: None,
-                Entry.embedding_model: None,
-                Entry.embedding_updated_at: None,
-            },
-            synchronize_session=False,
-        )
+        db.query(EntryEmbedding).delete(synchronize_session=False)
         db.commit()
     await _do_backfill()
 
