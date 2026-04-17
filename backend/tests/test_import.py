@@ -170,3 +170,78 @@ def test_run_import_rejects_invalid_mode():
     with SessionLocal() as db:
         with pytest.raises(ImportError_, match="invalid mode"):
             run_import(db, _valid_payload(), mode="nonsense", dry_run=False)
+
+
+def test_run_import_copy_creates_new_entry_on_conflict():
+    _clear()
+    existing_id = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"
+    with SessionLocal() as db:
+        db.add(Entry(
+            id=existing_id,
+            entry_date=date(2026, 4, 1),
+            title="ORIGINAL", content="orig",
+        ))
+        db.commit()
+        result = run_import(db, _valid_payload(), mode="copy", dry_run=False)
+
+        all_entries = db.query(Entry).all()
+
+    assert result["conflicts"] == 1
+    assert result["new_entries"] == 0
+    assert result["would_apply"] == 1
+    assert len(all_entries) == 2
+    original = next(e for e in all_entries if e.id == existing_id)
+    copy_entry = next(e for e in all_entries if e.id != existing_id)
+    assert original.title == "ORIGINAL"
+    assert copy_entry.title == "T"
+    assert copy_entry.entry_date.isoformat() == "2026-04-17"
+
+
+def test_run_import_overwrite_replaces_and_invalidates_embedding():
+    from datetime import datetime
+    _clear()
+    existing_id = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"
+    with SessionLocal() as db:
+        db.add(Entry(
+            id=existing_id,
+            entry_date=date(2026, 4, 1),
+            title="ORIGINAL", content="orig",
+            embedding=b"\x00\x01\x02",
+            embedding_model="old-model",
+            embedding_updated_at=datetime(2026, 1, 1),
+        ))
+        db.commit()
+        result = run_import(db, _valid_payload(), mode="overwrite", dry_run=False)
+
+    assert result["conflicts"] == 1
+    assert result["would_apply"] == 1
+
+    with SessionLocal() as db:
+        e = db.get(Entry, existing_id)
+        assert e.title == "T"
+        assert e.content == "C"
+        assert e.embedding is None
+        assert e.embedding_model is None
+        assert e.embedding_updated_at is None
+
+
+def test_run_import_overwrite_dry_run_does_not_mutate():
+    from datetime import datetime
+    _clear()
+    existing_id = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"
+    with SessionLocal() as db:
+        db.add(Entry(
+            id=existing_id,
+            entry_date=date(2026, 4, 1),
+            title="ORIGINAL", content="orig",
+            embedding=b"\x00\x01\x02",
+            embedding_model="old-model",
+        ))
+        db.commit()
+        run_import(db, _valid_payload(), mode="overwrite", dry_run=True)
+
+    with SessionLocal() as db:
+        e = db.get(Entry, existing_id)
+        assert e.title == "ORIGINAL"
+        assert e.embedding == b"\x00\x01\x02"
+        assert e.embedding_model == "old-model"

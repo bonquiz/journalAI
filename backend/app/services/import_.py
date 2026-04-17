@@ -143,7 +143,33 @@ def run_import(
                 conflict_count += 1
                 if mode == "skip":
                     continue
-                raise NotImplementedError(f"mode {mode} wird in Task 11 implementiert")
+                if mode == "copy":
+                    new_id_val = new_entry_id()
+                    db.add(EntryModel(
+                        id=new_id_val,
+                        entry_date=entry_date,
+                        title=title,
+                        content=content,
+                        raw_transcript=raw_transcript,
+                        chat_history=chat_history_json,
+                    ))
+                    db.flush()
+                    _set_entry_tags(db, new_id_val, tags)
+                    continue
+                # overwrite
+                existing = db.get(EntryModel, eid)
+                existing.entry_date = entry_date
+                existing.title = title
+                existing.content = content
+                existing.raw_transcript = raw_transcript
+                existing.chat_history = chat_history_json
+                existing.updated_at = utc_now()
+                existing.embedding = None
+                existing.embedding_model = None
+                existing.embedding_updated_at = None
+                db.flush()
+                _set_entry_tags(db, eid, tags)
+                continue
 
             new_count += 1
             db.add(EntryModel(
