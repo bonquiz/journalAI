@@ -27,3 +27,4 @@ class AppSettings(Base):
     password_hash: Mapped[str] = mapped_column(String, nullable=False)
     tts_voice: Mapped[str | None] = mapped_column(String)
     tts_speed: Mapped[float | None] = mapped_column(Float)
+    embed_dimensions: Mapped[int | None] = mapped_column(Integer)
