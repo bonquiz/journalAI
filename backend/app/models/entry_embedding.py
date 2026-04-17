@@ -19,4 +19,4 @@ class EntryEmbedding(Base):
         DateTime, server_default=func.current_timestamp(), nullable=False
     )
 
-    entry = relationship("Entry", back_populates="embeddings")
+    entry: Mapped["Entry"] = relationship(back_populates="embeddings")  # type: ignore[name-defined]
