@@ -29,6 +29,7 @@ dependencies = [
     "cryptography>=43.0",
     "slowapi>=0.1.9",
     "qrcode[pil]>=7.4",
+    "numpy>=2.1",
 ]
 
 [project.optional-dependencies]
