@@ -66,3 +66,29 @@ def test_entry_cascade_delete_tags():
         s.commit()
         # Link row should be gone
         assert s.query(EntryTag).filter_by(entry_id="e-cascade").count() == 0
+
+
+def test_entry_embedding_roundtrip():
+    from datetime import date
+    from app.models.entry import Entry
+    from app.models.entry_embedding import EntryEmbedding
+    from app.db import Base, SessionLocal, engine
+
+    engine.dispose()
+    Base.metadata.create_all(engine)
+    with SessionLocal() as db:
+        db.query(EntryEmbedding).delete()
+        db.query(Entry).delete()
+        db.add(Entry(id="ee1", entry_date=date(2026, 4, 1), title="t", content="c"))
+        db.add(EntryEmbedding(entry_id="ee1", model="m1", dim=3, vector=b"\x00" * 12))
+        db.commit()
+
+        row = db.get(EntryEmbedding, ("ee1", "m1"))
+        assert row is not None
+        assert row.dim == 3
+        assert len(row.vector) == 12
+
+        # Cascade delete
+        db.delete(db.get(Entry, "ee1"))
+        db.commit()
+        assert db.get(EntryEmbedding, ("ee1", "m1")) is None

@@ -28,3 +28,6 @@ class Entry(Base):
     tags: Mapped[list["EntryTag"]] = relationship(
         back_populates="entry", cascade="all, delete-orphan"
     )
+    embeddings: Mapped[list["EntryEmbedding"]] = relationship(
+        back_populates="entry", cascade="all, delete-orphan"
+    )
