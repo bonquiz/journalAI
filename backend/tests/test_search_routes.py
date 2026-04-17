@@ -1,5 +1,7 @@
+from datetime import date
 from unittest.mock import patch
 
+import numpy as np
 from fastapi.testclient import TestClient
 
 from app.auth.password import hash_password
@@ -8,6 +10,7 @@ from app.db import Base, SessionLocal, engine
 from app.main import app
 from app.models.entry import Entry
 from app.models.settings import AppSettings
+from app.services.embeddings import pack_vector
 from app.services.search import RerankedResult, SemanticSearchResponse
 
 HEADERS = {"x-csrf-token": "t"}
@@ -84,3 +87,44 @@ def test_post_search_maps_502_on_embed_failure():
             )
     assert r.status_code == 502
     assert "nicht erreichbar" in r.json()["detail"]
+
+
+def _seed(with_emb: int, without_emb: int, model: str):
+    with SessionLocal() as db:
+        db.query(Entry).delete()
+        for i in range(with_emb):
+            db.add(Entry(
+                id=f"w{i}", entry_date=date(2026, 4, 1), title=f"w{i}", content="c",
+                embedding=pack_vector(np.array([1.0], dtype=np.float32)),
+                embedding_model=model,
+            ))
+        for i in range(without_emb):
+            db.add(Entry(id=f"n{i}", entry_date=date(2026, 4, 1), title=f"n{i}", content="c"))
+        db.commit()
+
+
+def test_search_status_counts():
+    sid = create_session()
+    _seed(3, 2, "m1")
+    with TestClient(app) as c:
+        r = c.get("/api/search/status", cookies={"session": sid})
+    assert r.status_code == 200
+    body = r.json()
+    assert body["total"] == 5
+    assert body["embedded"] == 3
+    assert body["pending"] == 2
+    assert body["current_model"] == "m1"
+    assert body["configured"] is True
+
+
+def test_search_status_not_configured():
+    sid = create_session()
+    with SessionLocal() as db:
+        db.get(AppSettings, 1).embed_model = None
+        db.commit()
+    with TestClient(app) as c:
+        r = c.get("/api/search/status", cookies={"session": sid})
+    assert r.json()["configured"] is False
+    with SessionLocal() as db:
+        db.get(AppSettings, 1).embed_model = "m1"
+        db.commit()
