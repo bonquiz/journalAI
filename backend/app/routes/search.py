@@ -6,9 +6,9 @@ from sqlalchemy import func, select
 
 from app.db import SessionLocal
 from app.models.entry import Entry
-from app.models.settings import AppSettings
 from app.security.rate_limit import limiter
 from app.services.embedding_jobs import is_job_running, request_reindex
+from app.services.llm_client import resolved_model
 from app.services.search import semantic_search
 
 logger = logging.getLogger(__name__)
@@ -38,9 +38,8 @@ async def search(request: Request, body: SearchRequest) -> dict:
 
 @router.get("/status")
 async def search_status() -> dict:
+    current = resolved_model("embed")
     with SessionLocal() as db:
-        s = db.get(AppSettings, 1)
-        current = s.embed_model if s else None
         total = int(db.scalar(select(func.count()).select_from(Entry)) or 0)
         embedded = int(db.scalar(
             select(func.count()).select_from(Entry).where(

@@ -142,10 +142,18 @@ def test_semantic_search_end_to_end():
     assert result.results[0].reason == "Match"
 
 
-def test_semantic_search_not_configured_when_model_missing():
+def test_semantic_search_not_configured_when_model_missing(monkeypatch):
+    """not_configured only when DB, ENV, and OpenAI-default all fail.
+    _DEFAULTS is frozen at module import time, so we patch it directly
+    for the duration of the test."""
+    from app.services import llm_client
     from app.services.search import semantic_search
+
+    monkeypatch.setitem(llm_client._DEFAULTS, "embed", ("http://local.example/v1", "", ""))
     with SessionLocal() as db:
-        db.get(AppSettings, 1).embed_model = None
+        s = db.get(AppSettings, 1)
+        s.embed_model = None
+        s.embed_base_url = None
         db.commit()
     result = semantic_search("q")
     assert result.status == "not_configured"

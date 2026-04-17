@@ -25,15 +25,16 @@ from app.services.embeddings import (
     embed_text,
     pack_vector,
 )
+from app.services.llm_client import resolved_model
 from app.utc import utc_now
 
 log = logging.getLogger(__name__)
 
 
 def _current_embed_model() -> str | None:
-    with SessionLocal() as db:
-        s = db.get(AppSettings, 1)
-        return s.embed_model if s else None
+    """Model name used for the current embed pass. Honours the full
+    resolution chain from llm_client (DB → ENV → OpenAI-default)."""
+    return resolved_model("embed")
 
 
 def embed_entry_async(entry_id: str) -> None:

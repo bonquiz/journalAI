@@ -117,10 +117,16 @@ def test_search_status_counts():
     assert body["configured"] is True
 
 
-def test_search_status_not_configured():
+def test_search_status_not_configured(monkeypatch):
+    """configured=False only if DB, ENV, and OpenAI-default all yield no
+    model. _DEFAULTS is frozen at import time, so we patch it directly."""
+    from app.services import llm_client
+    monkeypatch.setitem(llm_client._DEFAULTS, "embed", ("http://local.example/v1", "", ""))
     sid = create_session()
     with SessionLocal() as db:
-        db.get(AppSettings, 1).embed_model = None
+        s = db.get(AppSettings, 1)
+        s.embed_model = None
+        s.embed_base_url = None
         db.commit()
     with TestClient(app) as c:
         r = c.get("/api/search/status", cookies={"session": sid})

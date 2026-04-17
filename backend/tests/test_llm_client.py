@@ -76,3 +76,37 @@ def test_openai_api_key_not_used_for_non_openai_url(monkeypatch):
         db.commit()
     client, _ = get_client("embed")
     assert client.api_key == "unused"  # falls back to placeholder, not shared key
+
+
+def test_openai_default_model_when_config_empty(monkeypatch):
+    """When neither DB nor ENV set a model but base_url is OpenAI,
+    fall back to the capability's OPENAI_DEFAULT_MODELS entry.
+    _DEFAULTS is frozen at import time → patch it directly."""
+    from app.services import llm_client
+    from app.services.llm_client import resolved_model
+    monkeypatch.setitem(
+        llm_client._DEFAULTS, "embed",
+        ("https://api.openai.com/v1", "", ""),  # ENV chain empty, OpenAI url
+    )
+    with SessionLocal() as db:
+        s = db.get(AppSettings, 1)
+        s.embed_base_url = None
+        s.embed_api_key_wrapped = None
+        s.embed_model = None
+        db.commit()
+    assert resolved_model("embed") == "text-embedding-3-small"
+    _, model = get_client("embed")
+    assert model == "text-embedding-3-small"
+
+
+def test_no_default_model_for_non_openai_and_empty_config(monkeypatch):
+    """Non-OpenAI base_url with no explicit model → resolved_model=None."""
+    from app.services import llm_client
+    from app.services.llm_client import resolved_model
+    monkeypatch.setitem(llm_client._DEFAULTS, "embed", ("http://local.example/v1", "", ""))
+    with SessionLocal() as db:
+        s = db.get(AppSettings, 1)
+        s.embed_base_url = None
+        s.embed_model = None
+        db.commit()
+    assert resolved_model("embed") is None

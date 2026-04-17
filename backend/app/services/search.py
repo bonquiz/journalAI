@@ -11,9 +11,8 @@ from sqlalchemy import func, select
 
 from app.db import SessionLocal
 from app.models.entry import Entry
-from app.models.settings import AppSettings
 from app.services.embeddings import cosine_similarity, embed_text, unpack_vector
-from app.services.llm_client import get_client
+from app.services.llm_client import get_client, resolved_model
 
 log = logging.getLogger(__name__)
 
@@ -158,12 +157,11 @@ def semantic_search(query: str, top_k: int = 10) -> SemanticSearchResponse:
 
     Raises HTTPException(502, ...) if the embed step fails (handled at route).
     """
-    with SessionLocal() as db:
-        s = db.get(AppSettings, 1)
-        current_model = s.embed_model if s else None
-        if not current_model:
-            return SemanticSearchResponse(results=[], status="not_configured")
+    current_model = resolved_model("embed")
+    if not current_model:
+        return SemanticSearchResponse(results=[], status="not_configured")
 
+    with SessionLocal() as db:
         rows = db.execute(
             select(Entry).where(
                 Entry.embedding.is_not(None),
