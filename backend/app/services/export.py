@@ -2,7 +2,7 @@
 import json
 from typing import Any
 
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, selectinload
 
 from app.models.entry import Entry
 from app.models.tag import Tag
@@ -14,7 +14,7 @@ EXPORT_VERSION = "1"
 def build_export_payload(db: Session) -> dict[str, Any]:
     """Baut das Export-Dict. Reiner Builder, ohne I/O."""
     entries_out: list[dict[str, Any]] = []
-    for e in db.query(Entry).order_by(Entry.entry_date.desc(), Entry.created_at.desc()).all():
+    for e in db.query(Entry).options(selectinload(Entry.tags)).order_by(Entry.entry_date.desc(), Entry.created_at.desc()).all():
         entries_out.append({
             "id": e.id,
             "entry_date": e.entry_date.isoformat(),
