@@ -139,3 +139,76 @@ def rerank_results(query: str, candidates: list, top_k: int) -> list[RerankedRes
     except Exception as exc:
         log.warning("rerank_results failed, using cosine order: %s", exc)
         return _cosine_fallback(candidates, top_k)
+
+
+import numpy as np
+from sqlalchemy import func, select
+
+from app.db import SessionLocal
+from app.models.entry import Entry
+from app.models.settings import AppSettings
+from app.services.embeddings import cosine_similarity, embed_text, unpack_vector
+
+RERANK_POOL_SIZE = 30
+
+
+def semantic_search(query: str, top_k: int = 10) -> SemanticSearchResponse:
+    """Full pipeline: intent → embed → cosine filter → LLM rerank → top_k.
+
+    Raises HTTPException(502, ...) if the embed step fails (handled at route).
+    """
+    with SessionLocal() as db:
+        s = db.get(AppSettings, 1)
+        current_model = s.embed_model if s else None
+        if not current_model:
+            return SemanticSearchResponse(results=[], status="not_configured")
+
+        rows = db.execute(
+            select(Entry).where(
+                Entry.embedding.is_not(None),
+                Entry.embedding_model == current_model,
+            )
+        ).scalars().all()
+        total_count = int(db.scalar(select(func.count()).select_from(Entry)) or 0)
+        embedded_count = len(rows)
+
+    if not rows:
+        return SemanticSearchResponse(
+            results=[],
+            status="indexing",
+            progress={"embedded": embedded_count, "total": total_count},
+        )
+
+    intent = extract_search_intent(query)
+    query_vec, _ = embed_text(intent)  # may raise HTTPException(502)
+
+    # Dimension guard: drop vectors whose shape doesn't match the query.
+    # Unlike "indexing", this indicates corrupted/stale blobs, so if ALL
+    # candidates are dropped we surface it as 'error' — not as progress.
+    candidates = []
+    vectors = []
+    dropped = 0
+    for e in rows:
+        v = unpack_vector(e.embedding)
+        if v.shape[0] == query_vec.shape[0]:
+            candidates.append(e)
+            vectors.append(v)
+        else:
+            dropped += 1
+    if dropped:
+        log.warning("semantic_search dropped %d candidates due to dimension mismatch", dropped)
+
+    if not candidates:
+        return SemanticSearchResponse(
+            results=[],
+            status="error",
+            progress={"embedded": embedded_count, "total": total_count, "corrupted": dropped},
+        )
+
+    matrix = np.stack(vectors)
+    scores = cosine_similarity(query_vec, matrix)
+    order = np.argsort(scores)[::-1][:RERANK_POOL_SIZE]
+    pool = [candidates[i] for i in order]
+
+    reranked = rerank_results(query, pool, top_k=top_k)
+    return SemanticSearchResponse(results=reranked, status="ok")
