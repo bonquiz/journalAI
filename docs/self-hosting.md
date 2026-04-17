@@ -49,8 +49,13 @@ Each of the four AI capabilities (STT, Chat, Embeddings, TTS) has its own:
 - **API Key** — passed as `Authorization: Bearer <key>`; use any non-empty string for local servers that ignore it
 - **Model** — the model identifier sent in each request
 
-See `docs/endpoint-compatibility.md` for worked examples. All endpoint settings can be
-changed at runtime through the Settings UI without restarting the container.
+**Minimum setup for all-OpenAI:** just set `OPENAI_API_KEY` in `.env`. Per-capability
+key and model fields can stay blank — they fall back to the shared key and to sensible
+OpenAI defaults (`whisper-1`, `gpt-4o-mini`, `text-embedding-3-small`, `tts-1`).
+
+See `docs/endpoint-compatibility.md` for the full resolution chain and worked examples
+for Ollama / local-only / hybrid setups. All endpoint settings can be changed at runtime
+through the Settings UI without restarting the container.
 
 ## 7. Data Location
 
