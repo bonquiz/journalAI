@@ -1,3 +1,6 @@
+from datetime import date
+
+import numpy as np
 from fastapi.testclient import TestClient
 
 from app.auth.password import hash_password, verify_password
@@ -5,7 +8,9 @@ from app.auth.sessions import create_session
 from app.crypto import unwrap_secret
 from app.db import Base, SessionLocal, engine
 from app.main import app
+from app.models.entry import Entry
 from app.models.settings import AppSettings
+from app.services.embeddings import pack_vector
 
 HEADERS = {"x-csrf-token": "t"}
 def cookies(sid): return {"session": sid, "csrf": "t"}
@@ -106,3 +111,72 @@ def test_tts_voice_empty_string_clears_override():
         g = c.get("/api/settings", cookies=cookies(sid)).json()
     assert g["tts_voice"] is None
     assert g["tts_speed"] is None
+
+
+def test_settings_put_returns_full_payload():
+    """Response now mirrors GET /api/settings (full SettingsOut) instead of {ok}."""
+    sid = create_session()
+    with SessionLocal() as db:
+        db.get(AppSettings, 1).embed_model = "initial"
+        db.commit()
+    with TestClient(app) as c:
+        r = c.put(
+            "/api/settings",
+            json={"embed_model": "initial"},  # no real change
+            cookies=cookies(sid),
+            headers=HEADERS,
+        )
+    assert r.status_code == 200
+    body = r.json()
+    # Must include full SettingsOut-like shape
+    assert "embed_model" in body
+    assert "tts_voice" in body
+    assert body["embed_model"] == "initial"
+    assert "warning" not in body
+
+
+def test_settings_put_warns_on_embed_model_change_with_existing_entries():
+    sid = create_session()
+    with SessionLocal() as db:
+        db.get(AppSettings, 1).embed_model = "old-model"
+        db.query(Entry).delete()
+        db.add(Entry(
+            id="mm1", entry_date=date(2026, 4, 1), title="t", content="c",
+            embedding=pack_vector(np.array([0.1], dtype=np.float32)),
+            embedding_model="old-model",
+        ))
+        db.commit()
+
+    with TestClient(app) as c:
+        r = c.put(
+            "/api/settings",
+            json={"embed_model": "new-model"},
+            cookies=cookies(sid),
+            headers=HEADERS,
+        )
+    assert r.status_code == 200
+    body = r.json()
+    assert body["warning"] == "embedding_model_mismatch"
+    assert body["embedding_mismatch"]["old_model"] == "old-model"
+    assert body["embedding_mismatch"]["new_model"] == "new-model"
+    assert body["embedding_mismatch"]["affected_entries"] == 1
+    assert body["embed_model"] == "new-model"  # still saved
+    with SessionLocal() as db:
+        assert db.get(AppSettings, 1).embed_model == "new-model"
+
+
+def test_settings_put_no_warning_when_no_existing_entries():
+    sid = create_session()
+    with SessionLocal() as db:
+        db.query(Entry).delete()
+        db.get(AppSettings, 1).embed_model = "m1"
+        db.commit()
+    with TestClient(app) as c:
+        r = c.put(
+            "/api/settings",
+            json={"embed_model": "m2"},
+            cookies=cookies(sid),
+            headers=HEADERS,
+        )
+    assert r.status_code == 200
+    assert "warning" not in r.json()
