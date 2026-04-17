@@ -55,7 +55,7 @@ def embed_entry_async(entry_id: str) -> None:
         model_at_start = _current_embed_model()
 
     try:
-        vec, resolved_model = embed_text(text)
+        vec, returned_model = embed_text(text)
     except ProviderRateLimited:
         # Let the backfill worker's backoff loop handle 429. Route-level
         # BackgroundTask invocations have nobody to catch this, so they
@@ -67,13 +67,13 @@ def embed_entry_async(entry_id: str) -> None:
 
     # Model-change guard: if settings moved on while we were calling,
     # don't persist stale work. Compare against model_at_start — if it changed
-    # or if resolved_model != current, skip the write.
+    # or if returned_model != current, skip the write.
     current_now = _current_embed_model()
-    if current_now != model_at_start or current_now != resolved_model:
+    if current_now != model_at_start or current_now != returned_model:
         log.info(
             "embed_entry_async: model changed during call for %s "
             "(start=%s, resolved=%s, now=%s) — discarding",
-            entry_id, model_at_start, resolved_model, current_now,
+            entry_id, model_at_start, returned_model, current_now,
         )
         return
 
@@ -81,7 +81,7 @@ def embed_entry_async(entry_id: str) -> None:
         e = db.get(Entry, entry_id)
         if e is None:
             return  # deleted between embed + write
-        save_embedding_vector(db, entry_id, resolved_model, vec)
+        save_embedding_vector(db, entry_id, returned_model, vec)
         s = db.get(AppSettings, 1)
         # embed_dimensions: set only initially, never silently overwrite
         if s is not None:

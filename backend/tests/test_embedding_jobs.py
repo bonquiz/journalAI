@@ -165,7 +165,7 @@ def test_backfill_fills_missing_and_skips_matching_model():
     assert route.call_count == 2  # a + b, not c
 
 
-def test_reindex_nulls_then_refills_under_same_lock():
+def test_reindex_clears_rows_then_refills_under_same_lock():
     from app.services.embedding_jobs import _do_reindex
 
     _reset_entries()
