@@ -9,8 +9,9 @@ from app.auth.sessions import create_session
 from app.db import Base, SessionLocal, engine
 from app.main import app
 from app.models.entry import Entry
+from app.models.entry_embedding import EntryEmbedding
 from app.models.settings import AppSettings
-from app.services.embeddings import pack_vector
+from app.services.embeddings import save_embedding_vector
 
 HEADERS = {"x-csrf-token": "t"}
 
@@ -55,9 +56,9 @@ def test_update_entry_content_invalidates_embedding():
         db.query(Entry).delete()
         db.add(Entry(
             id="upd1", entry_date=date(2026, 4, 1), title="old", content="old-content",
-            embedding=pack_vector(np.array([1.0, 0.0], dtype=np.float32)),
-            embedding_model="m1",
         ))
+        db.commit()
+        save_embedding_vector(db, "upd1", "m1", np.array([1.0, 0.0], dtype=np.float32))
         db.commit()
 
     with patch("app.routes.entries.embed_entry_async") as mock_embed:
@@ -70,9 +71,7 @@ def test_update_entry_content_invalidates_embedding():
             )
     assert r.status_code == 200
     with SessionLocal() as db:
-        e = db.get(Entry, "upd1")
-        assert e.embedding is None
-        assert e.embedding_model is None
+        assert db.get(EntryEmbedding, ("upd1", "m1")) is None
     mock_embed.assert_called_once_with("upd1")
 
 
@@ -82,9 +81,9 @@ def test_update_entry_tags_only_keeps_embedding():
         db.query(Entry).filter(Entry.id == "upd2").delete()
         db.add(Entry(
             id="upd2", entry_date=date(2026, 4, 1), title="t", content="c",
-            embedding=pack_vector(np.array([1.0, 0.0], dtype=np.float32)),
-            embedding_model="m1",
         ))
+        db.commit()
+        save_embedding_vector(db, "upd2", "m1", np.array([1.0, 0.0], dtype=np.float32))
         db.commit()
 
     with patch("app.routes.entries.embed_entry_async") as mock_embed:
@@ -97,7 +96,5 @@ def test_update_entry_tags_only_keeps_embedding():
             )
     assert r.status_code == 200
     with SessionLocal() as db:
-        e = db.get(Entry, "upd2")
-        assert e.embedding is not None
-        assert e.embedding_model == "m1"
+        assert db.get(EntryEmbedding, ("upd2", "m1")) is not None
     mock_embed.assert_not_called()

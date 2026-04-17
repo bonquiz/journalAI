@@ -120,3 +120,82 @@ def test_embed_text_maps_connect_error_to_502():
             embed_text("x")
     assert ei.value.status_code == 502
     assert "unreachable" in ei.value.detail.lower() or "nicht erreichbar" in ei.value.detail.lower()
+
+
+def test_save_and_load_embedding_vector():
+    from datetime import date
+    import numpy as np
+    from app.db import Base, SessionLocal, engine
+    from app.models.entry import Entry
+    from app.services.embeddings import (
+        load_embedding_vector,
+        save_embedding_vector,
+    )
+
+    engine.dispose()
+    Base.metadata.create_all(engine)
+    vec = np.array([0.1, 0.2, 0.3], dtype=np.float32)
+
+    with SessionLocal() as db:
+        db.query(Entry).delete()
+        db.add(Entry(id="e1", entry_date=date(2026, 4, 1), title="t", content="c"))
+        db.commit()
+        save_embedding_vector(db, "e1", "m1", vec)
+        db.commit()
+
+    with SessionLocal() as db:
+        got = load_embedding_vector(db, "e1", "m1")
+        assert got is not None
+        assert np.allclose(got, vec)
+        assert load_embedding_vector(db, "e1", "m-other") is None
+
+
+def test_save_embedding_upserts_on_same_model():
+    from datetime import date
+    import numpy as np
+    from app.db import Base, SessionLocal, engine
+    from app.models.entry import Entry
+    from app.models.entry_embedding import EntryEmbedding
+    from app.services.embeddings import save_embedding_vector
+
+    engine.dispose()
+    Base.metadata.create_all(engine)
+    with SessionLocal() as db:
+        db.query(Entry).delete()
+        db.add(Entry(id="e2", entry_date=date(2026, 4, 1), title="t", content="c"))
+        db.commit()
+        save_embedding_vector(db, "e2", "m1", np.array([1.0, 0.0], dtype=np.float32))
+        save_embedding_vector(db, "e2", "m1", np.array([0.0, 1.0], dtype=np.float32))
+        db.commit()
+
+    with SessionLocal() as db:
+        rows = db.query(EntryEmbedding).filter_by(entry_id="e2").all()
+        assert len(rows) == 1
+        assert rows[0].dim == 2
+
+
+def test_delete_embeddings_for_entry_removes_all_models():
+    from datetime import date
+    import numpy as np
+    from app.db import Base, SessionLocal, engine
+    from app.models.entry import Entry
+    from app.models.entry_embedding import EntryEmbedding
+    from app.services.embeddings import (
+        delete_embeddings_for_entry,
+        save_embedding_vector,
+    )
+
+    engine.dispose()
+    Base.metadata.create_all(engine)
+    with SessionLocal() as db:
+        db.query(Entry).delete()
+        db.add(Entry(id="e3", entry_date=date(2026, 4, 1), title="t", content="c"))
+        db.commit()
+        save_embedding_vector(db, "e3", "m1", np.array([1.0], dtype=np.float32))
+        save_embedding_vector(db, "e3", "m2", np.array([1.0, 2.0], dtype=np.float32))
+        db.commit()
+        delete_embeddings_for_entry(db, "e3")
+        db.commit()
+
+    with SessionLocal() as db:
+        assert db.query(EntryEmbedding).filter_by(entry_id="e3").count() == 0

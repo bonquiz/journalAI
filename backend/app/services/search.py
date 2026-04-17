@@ -11,6 +11,7 @@ from sqlalchemy import func, select
 
 from app.db import SessionLocal
 from app.models.entry import Entry
+from app.models.entry_embedding import EntryEmbedding
 from app.services.embeddings import cosine_similarity, embed_text, unpack_vector
 from app.services.llm_client import get_client, resolved_model
 
@@ -162,16 +163,15 @@ def semantic_search(query: str, top_k: int = 10) -> SemanticSearchResponse:
         return SemanticSearchResponse(results=[], status="not_configured")
 
     with SessionLocal() as db:
-        rows = db.execute(
-            select(Entry).where(
-                Entry.embedding.is_not(None),
-                Entry.embedding_model == current_model,
-            )
-        ).scalars().all()
+        rows_with_vec = db.execute(
+            select(Entry, EntryEmbedding.vector)
+            .join(EntryEmbedding, EntryEmbedding.entry_id == Entry.id)
+            .where(EntryEmbedding.model == current_model)
+        ).all()
         total_count = int(db.scalar(select(func.count()).select_from(Entry)) or 0)
-        embedded_count = len(rows)
+        embedded_count = len(rows_with_vec)
 
-    if not rows:
+    if not rows_with_vec:
         return SemanticSearchResponse(
             results=[],
             status="indexing",
@@ -187,8 +187,8 @@ def semantic_search(query: str, top_k: int = 10) -> SemanticSearchResponse:
     candidates = []
     vectors = []
     dropped = 0
-    for e in rows:
-        v = unpack_vector(e.embedding)
+    for e, blob in rows_with_vec:
+        v = unpack_vector(blob)
         if v.shape[0] == query_vec.shape[0]:
             candidates.append(e)
             vectors.append(v)

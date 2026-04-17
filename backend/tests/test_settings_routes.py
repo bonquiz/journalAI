@@ -9,6 +9,7 @@ from app.crypto import unwrap_secret
 from app.db import Base, SessionLocal, engine
 from app.main import app
 from app.models.entry import Entry
+from app.models.entry_embedding import EntryEmbedding
 from app.models.settings import AppSettings
 from app.services.embeddings import pack_vector
 
@@ -140,10 +141,12 @@ def test_settings_put_warns_on_embed_model_change_with_existing_entries():
     with SessionLocal() as db:
         db.get(AppSettings, 1).embed_model = "old-model"
         db.query(Entry).delete()
-        db.add(Entry(
-            id="mm1", entry_date=date(2026, 4, 1), title="t", content="c",
-            embedding=pack_vector(np.array([0.1], dtype=np.float32)),
-            embedding_model="old-model",
+        entry = Entry(id="mm1", entry_date=date(2026, 4, 1), title="t", content="c")
+        db.add(entry)
+        db.flush()
+        vec = pack_vector(np.array([0.1], dtype=np.float32))
+        db.add(EntryEmbedding(
+            entry_id="mm1", model="old-model", dim=1, vector=vec,
         ))
         db.commit()
 

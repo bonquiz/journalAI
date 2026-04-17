@@ -7,8 +7,9 @@ import respx
 from app.auth.password import hash_password
 from app.db import Base, SessionLocal, engine
 from app.models.entry import Entry
+from app.models.entry_embedding import EntryEmbedding
 from app.models.settings import AppSettings
-from app.services.embeddings import unpack_vector
+from app.services.embeddings import save_embedding_vector, unpack_vector
 
 
 def setup_module():
@@ -21,6 +22,7 @@ def setup_module():
 
 def teardown_module():
     with SessionLocal() as db:
+        db.query(EntryEmbedding).delete()
         db.query(Entry).delete()
         db.query(AppSettings).delete()
         db.commit()
@@ -28,6 +30,7 @@ def teardown_module():
 
 def _reset_entries():
     with SessionLocal() as db:
+        db.query(EntryEmbedding).delete()
         db.query(Entry).delete()
         db.commit()
 
@@ -46,11 +49,9 @@ def test_embed_entry_populates_embedding():
         embed_entry_async("e1")
 
     with SessionLocal() as db:
-        e = db.get(Entry, "e1")
-        assert e.embedding is not None
-        assert e.embedding_model == "m1"
-        assert e.embedding_updated_at is not None
-        assert unpack_vector(e.embedding).shape == (3,)
+        row = db.get(EntryEmbedding, ("e1", "m1"))
+        assert row is not None
+        assert unpack_vector(row.vector).shape == (3,)
 
 
 def test_embed_entry_skips_missing_entry():
@@ -71,7 +72,7 @@ def test_embed_entry_tolerates_provider_failure():
         embed_entry_async("e2")  # must not raise
 
     with SessionLocal() as db:
-        assert db.get(Entry, "e2").embedding is None
+        assert db.get(EntryEmbedding, ("e2", "m1")) is None
 
 
 def test_embed_entry_skips_persist_if_model_changed_since_call():
@@ -95,9 +96,8 @@ def test_embed_entry_skips_persist_if_model_changed_since_call():
         embed_entry_async("e3")
 
     with SessionLocal() as db:
-        e = db.get(Entry, "e3")
-        # Result discarded (or persisted with old model but NOT marked under new)
-        assert e.embedding_model != "new-model"
+        # Result discarded — no row for "new-model"
+        assert db.get(EntryEmbedding, ("e3", "new-model")) is None
 
     # restore for later tests
     with SessionLocal() as db:
@@ -145,21 +145,15 @@ import asyncio as _a  # noqa: E402
 
 def test_backfill_fills_missing_and_skips_matching_model():
     from app.services.embedding_jobs import _do_backfill
-    from app.services.embeddings import pack_vector
 
     _reset_entries()
     with SessionLocal() as db:
         db.add(Entry(id="a", entry_date=date(2026, 4, 1), title="a", content="c"))
-        db.add(Entry(
-            id="b", entry_date=date(2026, 4, 1), title="b", content="c",
-            embedding=pack_vector(np.array([0.0, 1.0], dtype=np.float32)),
-            embedding_model="old",
-        ))
-        db.add(Entry(
-            id="c", entry_date=date(2026, 4, 1), title="c", content="c",
-            embedding=pack_vector(np.array([1.0, 0.0], dtype=np.float32)),
-            embedding_model="m1",
-        ))
+        db.add(Entry(id="b", entry_date=date(2026, 4, 1), title="b", content="c"))
+        db.add(Entry(id="c", entry_date=date(2026, 4, 1), title="c", content="c"))
+        db.flush()
+        save_embedding_vector(db, "b", "old", np.array([0.0, 1.0], dtype=np.float32))
+        save_embedding_vector(db, "c", "m1", np.array([1.0, 0.0], dtype=np.float32))
         db.commit()
 
     with respx.mock(base_url="https://api.openai.com/v1") as mock:
@@ -171,17 +165,14 @@ def test_backfill_fills_missing_and_skips_matching_model():
     assert route.call_count == 2  # a + b, not c
 
 
-def test_reindex_nulls_then_refills_under_same_lock():
+def test_reindex_clears_rows_then_refills_under_same_lock():
     from app.services.embedding_jobs import _do_reindex
-    from app.services.embeddings import pack_vector
 
     _reset_entries()
     with SessionLocal() as db:
-        db.add(Entry(
-            id="z", entry_date=date(2026, 4, 1), title="z", content="c",
-            embedding=pack_vector(np.array([1.0], dtype=np.float32)),
-            embedding_model="m1",
-        ))
+        db.add(Entry(id="z", entry_date=date(2026, 4, 1), title="z", content="c"))
+        db.flush()
+        save_embedding_vector(db, "z", "m1", np.array([1.0], dtype=np.float32))
         db.commit()
 
     with respx.mock(base_url="https://api.openai.com/v1") as mock:
@@ -191,8 +182,9 @@ def test_reindex_nulls_then_refills_under_same_lock():
         _a.run(_do_reindex())
 
     with SessionLocal() as db:
-        e = db.get(Entry, "z")
-        assert unpack_vector(e.embedding).shape == (2,)
+        row = db.get(EntryEmbedding, ("z", "m1"))
+        assert row is not None
+        assert unpack_vector(row.vector).shape == (2,)
 
 
 def test_backoff_on_provider_rate_limit():
