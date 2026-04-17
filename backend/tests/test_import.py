@@ -96,3 +96,77 @@ def test_parse_rejects_invalid_json():
 def test_parse_rejects_corrupt_zip():
     with pytest.raises(AppImportError, match="ZIP"):
         parse_export_zip(b"not-a-zip-file")
+
+
+from datetime import date
+from app.schemas.entries import new_id
+from app.services.import_ import ImportError as ImportError_
+from app.services.import_ import run_import
+
+
+def _clear():
+    with SessionLocal() as db:
+        db.query(EntryTag).delete()
+        db.query(Entry).delete()
+        db.query(Tag).delete()
+        db.commit()
+
+
+def test_run_import_empty_db_skip_writes_all_new():
+    _clear()
+    with SessionLocal() as db:
+        result = run_import(db, _valid_payload(), mode="skip", dry_run=False)
+    assert result["total_in_file"] == 1
+    assert result["new_entries"] == 1
+    assert result["conflicts"] == 0
+    assert result["would_apply"] == 1
+    assert result["tags_new"] == 1
+    assert result["tags_merged"] == 0
+    assert result["errors"] == []
+
+    with SessionLocal() as db:
+        e = db.get(Entry, "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa")
+        assert e is not None
+        assert e.title == "T"
+        tag_names = {link.tag_name for link in e.tags}
+        assert tag_names == {"work"}
+
+
+def test_run_import_dry_run_rolls_back_all_writes():
+    _clear()
+    with SessionLocal() as db:
+        result = run_import(db, _valid_payload(), mode="skip", dry_run=True)
+    assert result["new_entries"] == 1
+    assert result["tags_new"] == 1
+
+    with SessionLocal() as db:
+        assert db.query(Entry).count() == 0
+        assert db.query(Tag).count() == 0
+
+
+def test_run_import_skip_preserves_existing_on_conflict():
+    _clear()
+    existing_id = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"
+    with SessionLocal() as db:
+        db.add(Entry(
+            id=existing_id,
+            entry_date=date(2026, 4, 1),
+            title="ORIGINAL", content="orig",
+        ))
+        db.commit()
+        result = run_import(db, _valid_payload(), mode="skip", dry_run=False)
+
+    assert result["new_entries"] == 0
+    assert result["conflicts"] == 1
+    assert result["would_apply"] == 0
+
+    with SessionLocal() as db:
+        e = db.get(Entry, existing_id)
+        assert e.title == "ORIGINAL"
+
+
+def test_run_import_rejects_invalid_mode():
+    _clear()
+    with SessionLocal() as db:
+        with pytest.raises(ImportError_, match="invalid mode"):
+            run_import(db, _valid_payload(), mode="nonsense", dry_run=False)
