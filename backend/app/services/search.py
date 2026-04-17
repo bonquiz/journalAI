@@ -130,7 +130,7 @@ def rerank_results(query: str, candidates: list, top_k: int) -> list[RerankedRes
                 entry_id=cid,
                 title=cand.title,
                 excerpt=_excerpt(cand.content),
-                score=float(item.get("score", 0)),
+                score=float(item.get("score") or 0),
                 reason=item.get("reason"),
             ))
         if not out:
