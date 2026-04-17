@@ -2,6 +2,7 @@
   import { onMount } from "svelte";
   import { api } from "$lib/api";
   import { getSearchStatus, reindexEmbeddings, type SearchStatus } from "$lib/search";
+  import DataPortability from "$lib/components/DataPortability.svelte";
   import ModelMismatchDialog from "$lib/components/ModelMismatchDialog.svelte";
 
   type SettingsOut = {
@@ -201,6 +202,8 @@
       <button type="button" onclick={confirmTotp} disabled={totpCode.length < 6}>Aktivieren</button>
     {/if}
   </section>
+
+  <DataPortability />
 {:else}
   <p>Lade Einstellungen…</p>
 {/if}
