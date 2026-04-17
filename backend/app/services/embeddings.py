@@ -6,6 +6,7 @@ import httpx
 from fastapi import HTTPException
 
 from app.services.llm_client import get_client
+from app.models.entry_embedding import EntryEmbedding
 
 MAX_EMBED_CHARS = 28000  # ~7k tokens @ 4 chars/token heuristic
 
@@ -85,8 +86,6 @@ def cosine_similarity(query: np.ndarray, candidates: np.ndarray) -> np.ndarray:
 
 def load_embedding_vector(db, entry_id: str, model: str) -> np.ndarray | None:
     """Return the float32 vector for (entry_id, model), or None if absent."""
-    from app.models.entry_embedding import EntryEmbedding
-
     row = db.get(EntryEmbedding, (entry_id, model))
     if row is None:
         return None
@@ -94,9 +93,13 @@ def load_embedding_vector(db, entry_id: str, model: str) -> np.ndarray | None:
 
 
 def save_embedding_vector(db, entry_id: str, model: str, vec: np.ndarray) -> None:
-    """Upsert a vector for (entry_id, model). Does NOT commit."""
-    from app.models.entry_embedding import EntryEmbedding
+    """Upsert a vector for (entry_id, model).
 
+    Flushes the session on the insert branch so that two consecutive calls
+    for the same PK within one session resolve to the update branch
+    (SQLAlchemy 2.0 registers composite-PK rows in the identity map only
+    after flush). Does NOT commit.
+    """
     blob = pack_vector(vec)
     dim = int(vec.shape[0])
     row = db.get(EntryEmbedding, (entry_id, model))
@@ -111,6 +114,4 @@ def save_embedding_vector(db, entry_id: str, model: str, vec: np.ndarray) -> Non
 
 def delete_embeddings_for_entry(db, entry_id: str) -> None:
     """Remove all embedding rows for an entry (all models). Does NOT commit."""
-    from app.models.entry_embedding import EntryEmbedding
-
     db.query(EntryEmbedding).filter_by(entry_id=entry_id).delete(synchronize_session=False)
