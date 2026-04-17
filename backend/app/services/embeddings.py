@@ -81,3 +81,36 @@ def cosine_similarity(query: np.ndarray, candidates: np.ndarray) -> np.ndarray:
     denom = q_norm * m_norms
     denom = np.where(denom == 0, 1.0, denom)
     return (m @ q) / denom
+
+
+def load_embedding_vector(db, entry_id: str, model: str) -> np.ndarray | None:
+    """Return the float32 vector for (entry_id, model), or None if absent."""
+    from app.models.entry_embedding import EntryEmbedding
+
+    row = db.get(EntryEmbedding, (entry_id, model))
+    if row is None:
+        return None
+    return unpack_vector(row.vector)
+
+
+def save_embedding_vector(db, entry_id: str, model: str, vec: np.ndarray) -> None:
+    """Upsert a vector for (entry_id, model). Does NOT commit."""
+    from app.models.entry_embedding import EntryEmbedding
+
+    blob = pack_vector(vec)
+    dim = int(vec.shape[0])
+    row = db.get(EntryEmbedding, (entry_id, model))
+    if row is None:
+        new_row = EntryEmbedding(entry_id=entry_id, model=model, dim=dim, vector=blob)
+        db.add(new_row)
+        db.flush()
+    else:
+        row.vector = blob
+        row.dim = dim
+
+
+def delete_embeddings_for_entry(db, entry_id: str) -> None:
+    """Remove all embedding rows for an entry (all models). Does NOT commit."""
+    from app.models.entry_embedding import EntryEmbedding
+
+    db.query(EntryEmbedding).filter_by(entry_id=entry_id).delete(synchronize_session=False)
