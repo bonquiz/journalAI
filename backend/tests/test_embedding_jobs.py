@@ -1,6 +1,7 @@
 from datetime import date
 
 import httpx
+import numpy as np
 import respx
 
 from app.auth.password import hash_password
@@ -137,3 +138,115 @@ def test_embed_dimensions_set_only_once():
     with SessionLocal() as db:
         # Guard: still 3, warning should be logged (not enforced in test)
         assert db.get(AppSettings, 1).embed_dimensions == 3
+
+
+import asyncio as _a  # noqa: E402
+
+
+def test_backfill_fills_missing_and_skips_matching_model():
+    from app.services.embedding_jobs import _do_backfill
+    from app.services.embeddings import pack_vector
+
+    _reset_entries()
+    with SessionLocal() as db:
+        db.add(Entry(id="a", entry_date=date(2026, 4, 1), title="a", content="c"))
+        db.add(Entry(
+            id="b", entry_date=date(2026, 4, 1), title="b", content="c",
+            embedding=pack_vector(np.array([0.0, 1.0], dtype=np.float32)),
+            embedding_model="old",
+        ))
+        db.add(Entry(
+            id="c", entry_date=date(2026, 4, 1), title="c", content="c",
+            embedding=pack_vector(np.array([1.0, 0.0], dtype=np.float32)),
+            embedding_model="m1",
+        ))
+        db.commit()
+
+    with respx.mock(base_url="https://api.openai.com/v1") as mock:
+        route = mock.post("/embeddings").mock(return_value=httpx.Response(
+            200, json={"data": [{"embedding": [0.5, 0.5]}], "model": "m1"},
+        ))
+        _a.run(_do_backfill())
+
+    assert route.call_count == 2  # a + b, not c
+
+
+def test_reindex_nulls_then_refills_under_same_lock():
+    from app.services.embedding_jobs import _do_reindex
+    from app.services.embeddings import pack_vector
+
+    _reset_entries()
+    with SessionLocal() as db:
+        db.add(Entry(
+            id="z", entry_date=date(2026, 4, 1), title="z", content="c",
+            embedding=pack_vector(np.array([1.0], dtype=np.float32)),
+            embedding_model="m1",
+        ))
+        db.commit()
+
+    with respx.mock(base_url="https://api.openai.com/v1") as mock:
+        mock.post("/embeddings").mock(return_value=httpx.Response(
+            200, json={"data": [{"embedding": [0.9, 0.1]}], "model": "m1"},
+        ))
+        _a.run(_do_reindex())
+
+    with SessionLocal() as db:
+        e = db.get(Entry, "z")
+        assert unpack_vector(e.embedding).shape == (2,)
+
+
+def test_backoff_on_provider_rate_limit():
+    """Provider 429 → exponential backoff 1s/2s/4s; after max retries, skip entry."""
+    from app.services.embedding_jobs import _do_backfill
+
+    _reset_entries()
+    with SessionLocal() as db:
+        db.add(Entry(id="r", entry_date=date(2026, 4, 1), title="t", content="c"))
+        db.commit()
+
+    calls = {"n": 0}
+
+    def _handler(request):
+        calls["n"] += 1
+        if calls["n"] <= 2:
+            return httpx.Response(429, json={"error": "rate limit"})
+        return httpx.Response(200, json={"data": [{"embedding": [0.1]}], "model": "m1"})
+
+    # Shortcut sleep for test speed
+    import app.services.embedding_jobs as jobs
+    old_steps = jobs.BACKOFF_STEPS
+    jobs.BACKOFF_STEPS = (0.01, 0.01, 0.01)
+    try:
+        with respx.mock(base_url="https://api.openai.com/v1") as mock:
+            mock.post("/embeddings").mock(side_effect=_handler)
+            _a.run(_do_backfill())
+    finally:
+        jobs.BACKOFF_STEPS = old_steps
+
+    assert calls["n"] == 3  # 2 x 429 + 1 success
+    with SessionLocal() as db:
+        assert db.get(Entry, "r").embedding is not None
+
+
+def test_request_coalescing():
+    """Multiple request_backfill() calls while a job is running collapse to one.
+    request_reindex() supersedes a queued backfill."""
+    from app.services.embedding_jobs import (
+        _state,
+        request_backfill,
+        request_reindex,
+    )
+    # Direct state inspection — runner isn't started in this test
+    _state.pending_backfill = False
+    _state.pending_reindex = False
+    _state.running = False
+
+    request_backfill()
+    request_backfill()
+    request_backfill()
+    assert _state.pending_backfill is True
+    assert _state.pending_reindex is False
+
+    request_reindex()
+    assert _state.pending_reindex is True
+    # pending_backfill becomes irrelevant — reindex does a full pass anyway

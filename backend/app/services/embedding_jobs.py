@@ -11,12 +11,16 @@ single-embed tasks writing stale results.
 """
 from __future__ import annotations
 
+import asyncio
 import logging
+
+from sqlalchemy import or_, select
 
 from app.db import SessionLocal
 from app.models.entry import Entry
 from app.models.settings import AppSettings
 from app.services.embeddings import (
+    ProviderRateLimited,
     build_entry_text,
     embed_text,
     pack_vector,
@@ -86,3 +90,142 @@ def embed_entry_async(entry_id: str) -> None:
                     s.embed_dimensions, int(vec.shape[0]),
                 )
         db.commit()
+
+
+# ---------------- Job Runner (State Machine) ----------------
+
+BACKFILL_THROTTLE_SECONDS = 0.2
+BACKOFF_STEPS = (1.0, 2.0, 4.0)
+
+
+class _JobState:
+    """Coalesced flags for a single worker. Not thread-safe — worker owns it."""
+    def __init__(self) -> None:
+        self.pending_backfill = False
+        self.pending_reindex = False
+        self.running = False
+        self.wakeup = asyncio.Event()
+
+
+_state = _JobState()
+_worker_task: asyncio.Task | None = None
+
+
+def request_backfill() -> None:
+    """Signal that a backfill is desired. Collapses with any pending request."""
+    _state.pending_backfill = True
+    _state.wakeup.set()
+
+
+def request_reindex() -> None:
+    """Signal that a full reindex is desired. Supersedes a pending backfill
+    (reindex does a complete pass anyway)."""
+    _state.pending_reindex = True
+    _state.wakeup.set()
+
+
+def is_job_running() -> bool:
+    return _state.running or _state.pending_backfill or _state.pending_reindex
+
+
+async def _do_backfill() -> None:
+    """Embed all entries where embedding is NULL or embedding_model != current.
+    Ordered by updated_at DESC so the freshest entries become searchable first.
+    """
+    current = _current_embed_model()
+    if not current:
+        log.info("_do_backfill: no embed_model configured, skipping")
+        return
+
+    with SessionLocal() as db:
+        ids = db.execute(
+            select(Entry.id)
+            .where(or_(Entry.embedding.is_(None), Entry.embedding_model != current))
+            .order_by(Entry.updated_at.desc())
+        ).scalars().all()
+
+    log.info("_do_backfill: %d entries pending for model=%s", len(ids), current)
+    for eid in ids:
+        await _embed_one_with_backoff(eid)
+        await asyncio.sleep(BACKFILL_THROTTLE_SECONDS)
+
+
+async def _embed_one_with_backoff(entry_id: str) -> None:
+    """Run embed_entry_async with exponential backoff on ProviderRateLimited."""
+    for delay in BACKOFF_STEPS:
+        try:
+            await asyncio.to_thread(embed_entry_async, entry_id)
+            return
+        except ProviderRateLimited:
+            log.info("429 for %s, sleeping %.1fs before retry", entry_id, delay)
+            await asyncio.sleep(delay)
+            continue
+    # Final attempt after all backoff steps
+    try:
+        await asyncio.to_thread(embed_entry_async, entry_id)
+    except ProviderRateLimited:
+        log.warning("embed_entry_async gave up for %s after retries", entry_id)
+
+
+async def _do_reindex() -> None:
+    """Null all embeddings, then do a full backfill. Runs under the same lock
+    as backfill — no release+reacquire race."""
+    log.info("_do_reindex: clearing all embeddings")
+    with SessionLocal() as db:
+        db.query(Entry).update(
+            {
+                Entry.embedding: None,
+                Entry.embedding_model: None,
+                Entry.embedding_updated_at: None,
+            },
+            synchronize_session=False,
+        )
+        db.commit()
+    await _do_backfill()
+
+
+async def _worker_loop() -> None:
+    """Single worker that drains pending flags, coalescing multiple requests.
+    Reindex supersedes backfill; both signals are consumed in one pass."""
+    while True:
+        await _state.wakeup.wait()
+        _state.wakeup.clear()
+        while _state.pending_backfill or _state.pending_reindex:
+            do_reindex = _state.pending_reindex
+            _state.pending_reindex = False
+            _state.pending_backfill = False
+            _state.running = True
+            try:
+                if do_reindex:
+                    await _do_reindex()
+                else:
+                    await _do_backfill()
+            except asyncio.CancelledError:
+                _state.running = False
+                raise
+            except Exception as exc:
+                log.exception("job runner crashed: %s", exc)
+            finally:
+                _state.running = False
+
+
+def start_worker(loop: asyncio.AbstractEventLoop | None = None) -> asyncio.Task:
+    """Start the worker coroutine. Called from the FastAPI lifespan."""
+    global _worker_task
+    if _worker_task and not _worker_task.done():
+        return _worker_task
+    _worker_task = asyncio.create_task(_worker_loop(), name="embedding-worker")
+    return _worker_task
+
+
+async def stop_worker() -> None:
+    """Cancel the worker and wait for it to exit. Called from the lifespan shutdown."""
+    global _worker_task
+    if _worker_task is None:
+        return
+    _worker_task.cancel()
+    try:
+        await _worker_task
+    except asyncio.CancelledError:
+        pass
+    _worker_task = None
