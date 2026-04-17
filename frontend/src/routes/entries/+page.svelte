@@ -6,13 +6,17 @@
   import SearchResultCard from "$lib/components/SearchResultCard.svelte";
   import SearchToggle from "$lib/components/SearchToggle.svelte";
   import { searchStore } from "$lib/stores/search.svelte";
+  import { mergePage, hasMore } from "$lib/entries-pagination";
 
   type Item = { id: string; title: string; entry_date: string; content: string; tags: string[] };
+
+  const PAGE_SIZE = 50;
 
   let allTags = $state<string[]>([]);
   let activeTags = $state<Set<string>>(new Set());
   let q = $state("");
   let items = $state<Item[]>([]);
+  let total = $state(0);
   let loading = $state(false);
 
   let recording = $state(false);
@@ -20,14 +24,32 @@
   let recorder: Recorder | null = null;
   let micError: string | null = $state(null);
 
-  async function load() {
+  async function fetchPage(offset: number): Promise<{ items: Item[]; total: number }> {
+    const tags = Array.from(activeTags).join(",");
+    return await api<{ items: Item[]; total: number }>(
+      `/api/entries?tags=${encodeURIComponent(tags)}&q=${encodeURIComponent(q)}`
+      + `&offset=${offset}&limit=${PAGE_SIZE}`,
+    );
+  }
+
+  async function loadFirstPage() {
     loading = true;
     try {
-      const tags = Array.from(activeTags).join(",");
-      const data = await api<{ items: Item[] }>(
-        `/api/entries?tags=${encodeURIComponent(tags)}&q=${encodeURIComponent(q)}`,
-      );
+      const data = await fetchPage(0);
       items = data.items;
+      total = data.total;
+    } finally {
+      loading = false;
+    }
+  }
+
+  async function loadMore() {
+    if (loading) return;
+    loading = true;
+    try {
+      const data = await fetchPage(items.length);
+      items = mergePage(items, data.items);
+      total = data.total;
     } finally {
       loading = false;
     }
@@ -37,12 +59,12 @@
     if (activeTags.has(t)) activeTags.delete(t);
     else activeTags.add(t);
     activeTags = new Set(activeTags);
-    load();
+    loadFirstPage();
   }
 
   function onKeywordSubmit(e: SubmitEvent) {
     e.preventDefault();
-    load();
+    loadFirstPage();
   }
 
   async function runSemanticSearch() {
@@ -88,7 +110,7 @@
 
   onMount(async () => {
     allTags = await api<string[]>("/api/tags");
-    await load();
+    await loadFirstPage();
   });
 </script>
 
@@ -179,7 +201,7 @@
     </div>
   {/if}
 {:else}
-  {#if loading}<p>Lade…</p>{/if}
+  {#if loading && items.length === 0}<p>Lade…</p>{/if}
   <div class="list">
     {#each items as e (e.id)}
       <EntryCard {e} />
@@ -188,6 +210,13 @@
       <p class="muted">Keine Einträge.</p>
     {/if}
   </div>
+  {#if hasMore(items.length, total)}
+    <div class="load-more">
+      <button type="button" onclick={loadMore} disabled={loading}>
+        {loading ? "Lade…" : `Mehr laden (${items.length}/${total})`}
+      </button>
+    </div>
+  {/if}
 {/if}
 
 <style>
@@ -225,4 +254,6 @@
   .banner.info { background: #dbeafe; color: #1e40af; }
   .banner a { color: inherit; text-decoration: underline; }
   .error { color: #b91c1c; }
+  .load-more { display: flex; justify-content: center; margin: 1rem 0 2rem; }
+  .load-more button { min-height: 44px; padding: 0.6rem 1.25rem; }
 </style>
