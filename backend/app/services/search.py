@@ -5,8 +5,14 @@ import json
 import logging
 from typing import Literal
 
+import numpy as np
 from pydantic import BaseModel
+from sqlalchemy import func, select
 
+from app.db import SessionLocal
+from app.models.entry import Entry
+from app.models.settings import AppSettings
+from app.services.embeddings import cosine_similarity, embed_text, unpack_vector
 from app.services.llm_client import get_client
 
 log = logging.getLogger(__name__)
@@ -104,7 +110,10 @@ def rerank_results(query: str, candidates: list, top_k: int) -> list[RerankedRes
                 {"role": "system", "content": RERANK_PROMPT},
                 {
                     "role": "user",
-                    "content": f"Anfrage: {query}\n\nKandidaten: {json.dumps(payload, ensure_ascii=False)}",
+                    "content": (
+                        f"Anfrage: {query}\n\n"
+                        f"Kandidaten: {json.dumps(payload, ensure_ascii=False)}"
+                    ),
                 },
             ],
         )
@@ -140,14 +149,6 @@ def rerank_results(query: str, candidates: list, top_k: int) -> list[RerankedRes
         log.warning("rerank_results failed, using cosine order: %s", exc)
         return _cosine_fallback(candidates, top_k)
 
-
-import numpy as np
-from sqlalchemy import func, select
-
-from app.db import SessionLocal
-from app.models.entry import Entry
-from app.models.settings import AppSettings
-from app.services.embeddings import cosine_similarity, embed_text, unpack_vector
 
 RERANK_POOL_SIZE = 30
 
