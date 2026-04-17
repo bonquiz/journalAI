@@ -30,9 +30,13 @@ from app.security.rate_limit import limiter
 async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
     # Startup
     ensure_bootstrap()
-    yield
-    # Shutdown: nothing to clean up explicitly — SQLAlchemy engine is
-    # module-global and torn down with the process.
+    from app.services.embedding_jobs import request_backfill, start_worker, stop_worker
+    start_worker()
+    request_backfill()  # kick off initial pass
+    try:
+        yield
+    finally:
+        await stop_worker()
 
 
 app = FastAPI(title="journalAI", docs_url=None, redoc_url=None, lifespan=lifespan)

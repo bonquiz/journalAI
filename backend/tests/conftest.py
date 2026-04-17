@@ -24,6 +24,27 @@ def override_env(monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def _reset_embedding_worker_state():
+    """Reset embedding worker state BEFORE each test to avoid event loop conflicts.
+
+    The embedding worker uses asyncio.Event which is bound to a specific event loop.
+    Each TestClient creates a new loop, so we must reset the worker between tests.
+    Running this before the test ensures a clean slate.
+    """
+    try:
+        from app.services import embedding_jobs
+        # Clean up state from previous test
+        embedding_jobs._state.wakeup = None
+        embedding_jobs._worker_task = None
+        embedding_jobs._state.pending_backfill = False
+        embedding_jobs._state.pending_reindex = False
+        embedding_jobs._state.running = False
+    except Exception:
+        pass
+    yield
+
+
+@pytest.fixture(autouse=True)
 def _reset_rate_limiter():
     """slowapi keeps in-memory counters across tests; reset between each test."""
     try:

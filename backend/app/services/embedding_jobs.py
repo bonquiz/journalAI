@@ -109,7 +109,7 @@ class _JobState:
         self.pending_backfill = False
         self.pending_reindex = False
         self.running = False
-        self.wakeup = asyncio.Event()
+        self.wakeup: asyncio.Event | None = None
 
 
 _state = _JobState()
@@ -119,14 +119,16 @@ _worker_task: asyncio.Task | None = None
 def request_backfill() -> None:
     """Signal that a backfill is desired. Collapses with any pending request."""
     _state.pending_backfill = True
-    _state.wakeup.set()
+    if _state.wakeup:
+        _state.wakeup.set()
 
 
 def request_reindex() -> None:
     """Signal that a full reindex is desired. Supersedes a pending backfill
     (reindex does a complete pass anyway)."""
     _state.pending_reindex = True
-    _state.wakeup.set()
+    if _state.wakeup:
+        _state.wakeup.set()
 
 
 def is_job_running() -> bool:
@@ -205,7 +207,19 @@ async def _worker_loop() -> None:
     """Single worker that drains pending flags, coalescing multiple requests.
     Reindex supersedes backfill; both signals are consumed in one pass."""
     while True:
-        await _state.wakeup.wait()
+        # Ensure Event is bound to the current event loop (handles TestClient loop changes)
+        try:
+            # Try to wait; if Event is bound to a different loop, this will raise
+            await _state.wakeup.wait()
+        except RuntimeError as e:
+            if "bound to a different event loop" in str(e):
+                # Event is stale; recreate it in the current loop
+                _state.wakeup = asyncio.Event()
+                # Set it immediately since we had a pending request
+                if _state.pending_backfill or _state.pending_reindex:
+                    _state.wakeup.set()
+                continue
+            raise
         _state.wakeup.clear()
         while _state.pending_backfill or _state.pending_reindex:
             do_reindex = _state.pending_reindex
@@ -231,6 +245,9 @@ def start_worker(loop: asyncio.AbstractEventLoop | None = None) -> asyncio.Task:
     global _worker_task
     if _worker_task and not _worker_task.done():
         return _worker_task
+    # Create Event in the current running loop to avoid event loop binding issues
+    if _state.wakeup is None:
+        _state.wakeup = asyncio.Event()
     _worker_task = asyncio.create_task(_worker_loop(), name="embedding-worker")
     return _worker_task
 
