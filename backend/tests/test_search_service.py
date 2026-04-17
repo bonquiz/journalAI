@@ -93,7 +93,7 @@ from fastapi import HTTPException
 
 from app.models.entry import Entry
 from app.models.settings import AppSettings
-from app.services.embeddings import pack_vector, save_embedding_vector
+from app.services.embeddings import save_embedding_vector
 
 
 def _reset_entries():
