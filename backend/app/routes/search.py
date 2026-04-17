@@ -8,7 +8,7 @@ from app.db import SessionLocal
 from app.models.entry import Entry
 from app.models.settings import AppSettings
 from app.security.rate_limit import limiter
-from app.services.embedding_jobs import is_job_running
+from app.services.embedding_jobs import is_job_running, request_reindex
 from app.services.search import semantic_search
 
 logger = logging.getLogger(__name__)
@@ -56,3 +56,10 @@ async def search_status() -> dict:
         "configured": bool(current),
         "indexing": is_job_running(),
     }
+
+
+@router.post("/reindex", status_code=202)
+@limiter.limit("1/minute")
+async def reindex(request: Request) -> dict:
+    request_reindex()
+    return {"ok": True}

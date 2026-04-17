@@ -128,3 +128,19 @@ def test_search_status_not_configured():
     with SessionLocal() as db:
         db.get(AppSettings, 1).embed_model = "m1"
         db.commit()
+
+
+def test_post_reindex_sets_flag():
+    sid = create_session()
+    with patch("app.routes.search.request_reindex") as mock_req:
+        with TestClient(app) as c:
+            r = c.post("/api/search/reindex", cookies=cookies(sid), headers=HEADERS)
+    assert r.status_code == 202
+    mock_req.assert_called_once()
+
+
+def test_post_reindex_requires_csrf():
+    sid = create_session()
+    with TestClient(app) as c:
+        r = c.post("/api/search/reindex", cookies={"session": sid})
+    assert r.status_code == 403
