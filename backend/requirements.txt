@@ -1,0 +1,16 @@
+fastapi>=0.115
+uvicorn[standard]>=0.32
+pydantic>=2.9
+pydantic-settings>=2.6
+sqlalchemy>=2.0
+alembic>=1.14
+pysqlcipher3>=1.2.0
+argon2-cffi>=23.1
+pyotp>=2.9
+python-multipart>=0.0.12
+openai>=1.54
+httpx>=0.27
+cryptography>=43.0
+slowapi>=0.1.9
+qrcode[pil]>=7.4
+numpy==2.1.3
