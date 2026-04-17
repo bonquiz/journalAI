@@ -1,6 +1,8 @@
 <script lang="ts">
   import { onMount } from "svelte";
   import { api } from "$lib/api";
+  import { getSearchStatus, reindexEmbeddings, type SearchStatus } from "$lib/search";
+  import ModelMismatchDialog from "$lib/components/ModelMismatchDialog.svelte";
 
   type SettingsOut = {
     stt_base_url: string | null; stt_api_key_masked: string | null; stt_model: string | null;
@@ -12,6 +14,12 @@
     totp_enabled: boolean;
   };
 
+  type EmbeddingMismatch = { old_model: string; new_model: string; affected_entries: number };
+  type SettingsPutResponse = SettingsOut & {
+    warning?: string;
+    embedding_mismatch?: EmbeddingMismatch;
+  };
+
   let s = $state<SettingsOut | null>(null);
   let form = $state<Record<string, string | number | null>>({});
   let pwOld = $state("");
@@ -20,18 +28,47 @@
   let totpCode = $state("");
   let msg: string | null = $state(null);
 
+  let embedStatus: SearchStatus | null = $state(null);
+  let mismatch: EmbeddingMismatch | null = $state(null);
+
   async function load() {
     s = await api<SettingsOut>("/api/settings");
   }
 
-  onMount(load);
+  async function loadStatus() {
+    try {
+      embedStatus = await getSearchStatus();
+    } catch {
+      /* ignore */
+    }
+  }
+
+  onMount(async () => {
+    await load();
+    await loadStatus();
+  });
 
   async function saveEndpoints() {
     msg = null;
-    await api("/api/settings", { method: "PUT", body: form });
+    const resp = await api<SettingsPutResponse>("/api/settings", { method: "PUT", body: form });
     form = {};
-    await load();
+    if (resp && typeof resp === "object") {
+      const { warning, embedding_mismatch, ...rest } = resp;
+      s = rest as SettingsOut;
+      if (warning === "embedding_model_mismatch" && embedding_mismatch) {
+        mismatch = embedding_mismatch;
+      }
+    } else {
+      await load();
+    }
+    await loadStatus();
     msg = "Einstellungen gespeichert.";
+  }
+
+  async function triggerReindex() {
+    if (!confirm(`Alle ${embedStatus?.total ?? 0} Einträge werden neu indexiert. Fortfahren?`)) return;
+    await reindexEmbeddings();
+    await loadStatus();
   }
 
   async function changePw() {
@@ -130,6 +167,22 @@
     <button type="button" onclick={saveEndpoints}>Speichern</button>
   </section>
 
+  <section class="card embed-status">
+    <h2>Index-Status</h2>
+    {#if embedStatus}
+      <p>
+        {embedStatus.embedded} von {embedStatus.total} Einträgen indexiert
+        (Modell: {embedStatus.current_model ?? "–"})
+        {#if embedStatus.indexing} — <em>läuft gerade</em>{/if}
+      </p>
+      <button type="button" onclick={triggerReindex} disabled={embedStatus.indexing}>
+        Jetzt neu indexieren
+      </button>
+    {:else}
+      <p class="muted">Status wird geladen…</p>
+    {/if}
+  </section>
+
   <section class="card">
     <h2>Passwort ändern</h2>
     <input type="password" bind:value={pwOld} placeholder="Aktuelles Passwort" />
@@ -151,6 +204,24 @@
 {:else}
   <p>Lade Einstellungen…</p>
 {/if}
+
+<ModelMismatchDialog
+  open={mismatch !== null}
+  mismatch={mismatch ?? { old_model: "", new_model: "", affected_entries: 0 }}
+  onRevert={async () => {
+    if (!mismatch) return;
+    await api("/api/settings", { method: "PUT", body: { embed_model: mismatch.old_model } });
+    mismatch = null;
+    await load();
+    await loadStatus();
+  }}
+  onReindex={async () => {
+    await reindexEmbeddings();
+    mismatch = null;
+    await loadStatus();
+  }}
+  onLater={() => (mismatch = null)}
+/>
 
 <style>
   .msg { color: var(--accent); padding: 0.5rem; }
