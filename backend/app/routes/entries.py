@@ -1,12 +1,13 @@
 import json
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, BackgroundTasks, HTTPException, Query
 from sqlalchemy import func, select
 
 from app.db import SessionLocal
 from app.models.entry import Entry
 from app.models.tag import EntryTag, Tag
 from app.schemas.entries import EntryCreate, EntryDetail, EntryOut, EntryUpdate, new_id
+from app.services.embedding_jobs import embed_entry_async
 from app.utc import utc_now
 
 router = APIRouter(prefix="/api/entries")
@@ -37,7 +38,7 @@ def _to_detail(e: Entry) -> dict:
 
 
 @router.post("", status_code=201)
-async def create_entry(body: EntryCreate) -> dict:
+async def create_entry(body: EntryCreate, background: BackgroundTasks) -> dict:
     with SessionLocal() as db:
         e = Entry(
             id=new_id(),
@@ -53,7 +54,10 @@ async def create_entry(body: EntryCreate) -> dict:
             db.add(EntryTag(entry_id=e.id, tag_name=n))
         db.commit()
         db.refresh(e)
-        return _to_detail(e)
+        entry_id = e.id
+        detail = _to_detail(e)
+    background.add_task(embed_entry_async, entry_id)
+    return detail
 
 
 @router.get("")
@@ -107,15 +111,18 @@ async def get_entry(eid: str) -> dict:
 
 
 @router.put("/{eid}")
-async def update_entry(eid: str, body: EntryUpdate) -> dict:
+async def update_entry(eid: str, body: EntryUpdate, background: BackgroundTasks) -> dict:
     with SessionLocal() as db:
         e = db.get(Entry, eid)
         if not e:
             raise HTTPException(404)
-        if body.title is not None:
+        text_changed = False
+        if body.title is not None and body.title != e.title:
             e.title = body.title
-        if body.content is not None:
+            text_changed = True
+        if body.content is not None and body.content != e.content:
             e.content = body.content
+            text_changed = True
         if body.entry_date is not None:
             e.entry_date = body.entry_date
         if body.tags is not None:
@@ -123,10 +130,18 @@ async def update_entry(eid: str, body: EntryUpdate) -> dict:
             _ensure_tags(db, body.tags)
             for n in set(body.tags):
                 db.add(EntryTag(entry_id=eid, tag_name=n))
+        if text_changed:
+            e.embedding = None
+            e.embedding_model = None
+            e.embedding_updated_at = None
         e.updated_at = utc_now()
         db.commit()
         db.refresh(e)
-        return _to_detail(e)
+        detail = _to_detail(e)
+
+    if text_changed:
+        background.add_task(embed_entry_async, eid)
+    return detail
 
 
 @router.delete("/{eid}", status_code=204)
