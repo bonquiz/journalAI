@@ -1,5 +1,7 @@
 """Export-Service: baut ein Dict im Export-Format (v1)."""
+import io
 import json
+import zipfile
 from typing import Any
 
 from sqlalchemy.orm import Session, selectinload
@@ -36,3 +38,12 @@ def build_export_payload(db: Session) -> dict[str, Any]:
         "entries": entries_out,
         "tags": tags_out,
     }
+
+
+def export_zip_bytes(db: Session) -> bytes:
+    """Baut ein In-Memory-ZIP mit `entries.json` und gibt den kompletten Payload zurück."""
+    payload = build_export_payload(db)
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, mode="w", compression=zipfile.ZIP_DEFLATED) as zf:
+        zf.writestr("entries.json", json.dumps(payload, ensure_ascii=False, indent=2))
+    return buf.getvalue()
