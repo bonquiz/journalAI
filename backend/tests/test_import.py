@@ -301,3 +301,124 @@ def test_run_import_reports_tag_counts_after_merge():
         result = run_import(db, _valid_payload(), mode="skip", dry_run=False)
     assert result["tags_merged"] == 1
     assert result["tags_new"] == 0
+
+
+from fastapi.testclient import TestClient
+from app.auth.sessions import create_session
+from app.main import app
+
+HEADERS = {"x-csrf-token": "t"}
+def _cookies(sid): return {"session": sid, "csrf": "t"}
+
+
+def test_import_requires_auth_with_valid_csrf():
+    """Mit gültigem CSRF-Double-Submit, aber ohne Session → 401."""
+    with TestClient(app) as c:
+        r = c.post(
+            "/api/import",
+            data={"mode": "skip", "dry_run": "true"},
+            files={"file": ("export.zip", b"", "application/zip")},
+            cookies={"csrf": "t"},
+            headers=HEADERS,
+        )
+    assert r.status_code == 401
+
+
+def test_import_rejects_without_csrf():
+    """Ohne CSRF-Header/Cookie → 403."""
+    with TestClient(app) as c:
+        r = c.post(
+            "/api/import",
+            data={"mode": "skip", "dry_run": "true"},
+            files={"file": ("export.zip", b"", "application/zip")},
+        )
+    assert r.status_code == 403
+
+
+def test_import_dry_run_does_not_mutate():
+    _clear()
+    sid = create_session()
+    zip_bytes = _zip_with(_valid_payload())
+    with TestClient(app) as c:
+        r = c.post(
+            "/api/import",
+            data={"mode": "skip", "dry_run": "true"},
+            files={"file": ("export.zip", zip_bytes, "application/zip")},
+            cookies=_cookies(sid),
+            headers=HEADERS,
+        )
+    assert r.status_code == 200
+    body = r.json()
+    assert body["dry_run"] is True
+    assert body["total_in_file"] == 1
+    assert body["new_entries"] == 1
+
+    with SessionLocal() as db:
+        assert db.query(Entry).count() == 0
+
+
+def test_import_real_run_persists():
+    _clear()
+    sid = create_session()
+    zip_bytes = _zip_with(_valid_payload())
+    with TestClient(app) as c:
+        r = c.post(
+            "/api/import",
+            data={"mode": "skip", "dry_run": "false"},
+            files={"file": ("export.zip", zip_bytes, "application/zip")},
+            cookies=_cookies(sid),
+            headers=HEADERS,
+        )
+    assert r.status_code == 200
+    assert r.json()["dry_run"] is False
+
+    with SessionLocal() as db:
+        assert db.query(Entry).count() == 1
+
+
+def test_import_rejects_invalid_zip():
+    _clear()
+    sid = create_session()
+    with TestClient(app) as c:
+        r = c.post(
+            "/api/import",
+            data={"mode": "skip", "dry_run": "false"},
+            files={"file": ("bad.zip", b"not-a-zip", "application/zip")},
+            cookies=_cookies(sid),
+            headers=HEADERS,
+        )
+    assert r.status_code == 400
+
+
+def test_import_rejects_invalid_mode():
+    _clear()
+    sid = create_session()
+    zip_bytes = _zip_with(_valid_payload())
+    with TestClient(app) as c:
+        r = c.post(
+            "/api/import",
+            data={"mode": "nonsense", "dry_run": "false"},
+            files={"file": ("export.zip", zip_bytes, "application/zip")},
+            cookies=_cookies(sid),
+            headers=HEADERS,
+        )
+    assert r.status_code == 400
+
+
+def test_import_rate_limit_6th_request_is_429():
+    """5/min Rate-Limit greift beim 6. Request."""
+    _clear()
+    sid = create_session()
+    zip_bytes = _zip_with(_valid_payload())
+    with TestClient(app) as c:
+        statuses = []
+        for i in range(6):
+            statuses.append(c.post(
+                "/api/import",
+                data={"mode": "skip", "dry_run": "true"},
+                files={"file": ("export.zip", zip_bytes, "application/zip")},
+                cookies=_cookies(sid),
+                headers=HEADERS,
+            ).status_code)
+    assert statuses[:5] == [200] * 5
+    assert statuses[5] == 429
