@@ -114,3 +114,37 @@ def test_export_timestamps_have_z_suffix():
     assert payload["exported_at"].endswith("Z")
     assert payload["entries"][0]["created_at"].endswith("Z")
     assert payload["entries"][0]["updated_at"].endswith("Z")
+
+
+from fastapi.testclient import TestClient
+from app.auth.sessions import create_session
+from app.main import app
+
+
+def test_get_export_requires_auth():
+    with TestClient(app) as c:
+        r = c.get("/api/export")
+    assert r.status_code == 401
+
+
+def test_get_export_returns_zip():
+    _clear()
+    with SessionLocal() as db:
+        db.add(Entry(
+            id=new_id(),
+            entry_date=date(2026, 4, 17),
+            title="Export-Test", content="Content",
+        ))
+        db.commit()
+    sid = create_session()
+    with TestClient(app) as c:
+        r = c.get("/api/export", cookies={"session": sid})
+    assert r.status_code == 200
+    assert r.headers["content-type"] == "application/zip"
+    assert "attachment" in r.headers["content-disposition"]
+    assert "journalai-export-" in r.headers["content-disposition"]
+
+    with zipfile.ZipFile(io.BytesIO(r.content), "r") as zf:
+        data = json.loads(zf.read("entries.json").decode("utf-8"))
+    assert data["version"] == "1"
+    assert any(e["title"] == "Export-Test" for e in data["entries"])
