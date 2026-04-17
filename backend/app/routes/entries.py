@@ -8,6 +8,7 @@ from app.models.entry import Entry
 from app.models.tag import EntryTag, Tag
 from app.schemas.entries import EntryCreate, EntryDetail, EntryOut, EntryUpdate, new_id
 from app.services.embedding_jobs import embed_entry_async
+from app.services.embeddings import delete_embeddings_for_entry
 from app.utc import utc_now
 
 router = APIRouter(prefix="/api/entries")
@@ -131,9 +132,7 @@ async def update_entry(eid: str, body: EntryUpdate, background: BackgroundTasks)
             for n in set(body.tags):
                 db.add(EntryTag(entry_id=eid, tag_name=n))
         if text_changed:
-            e.embedding = None
-            e.embedding_model = None
-            e.embedding_updated_at = None
+            delete_embeddings_for_entry(db, eid)
         e.updated_at = utc_now()
         db.commit()
         db.refresh(e)
