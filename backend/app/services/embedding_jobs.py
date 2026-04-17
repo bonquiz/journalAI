@@ -55,6 +55,11 @@ def embed_entry_async(entry_id: str) -> None:
 
     try:
         vec, resolved_model = embed_text(text)
+    except ProviderRateLimited:
+        # Let the backfill worker's backoff loop handle 429. Route-level
+        # BackgroundTask invocations have nobody to catch this, so they
+        # effectively skip — but that's preferable to pretending success.
+        raise
     except Exception as err:
         log.warning("embed_entry_async: embed failed for %s: %s", entry_id, err)
         return
@@ -138,9 +143,17 @@ async def _do_backfill() -> None:
         return
 
     with SessionLocal() as db:
+        # NULL-safe: SQL `embedding_model != current` is NULL (not TRUE) when
+        # embedding_model is NULL, so we must handle that branch explicitly.
         ids = db.execute(
             select(Entry.id)
-            .where(or_(Entry.embedding.is_(None), Entry.embedding_model != current))
+            .where(
+                or_(
+                    Entry.embedding.is_(None),
+                    Entry.embedding_model.is_(None),
+                    Entry.embedding_model != current,
+                )
+            )
             .order_by(Entry.updated_at.desc())
         ).scalars().all()
 
@@ -151,7 +164,11 @@ async def _do_backfill() -> None:
 
 
 async def _embed_one_with_backoff(entry_id: str) -> None:
-    """Run embed_entry_async with exponential backoff on ProviderRateLimited."""
+    """Run embed_entry_async with exponential backoff on ProviderRateLimited.
+
+    Attempts up to len(BACKOFF_STEPS) + 1 times total (initial attempt plus
+    one retry per backoff step). Default: 4 attempts, 1s/2s/4s between them.
+    """
     for delay in BACKOFF_STEPS:
         try:
             await asyncio.to_thread(embed_entry_async, entry_id)

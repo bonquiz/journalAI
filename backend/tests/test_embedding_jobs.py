@@ -196,36 +196,58 @@ def test_reindex_nulls_then_refills_under_same_lock():
 
 
 def test_backoff_on_provider_rate_limit():
-    """Provider 429 → exponential backoff 1s/2s/4s; after max retries, skip entry."""
-    from app.services.embedding_jobs import _do_backfill
+    """When embed_entry_async raises ProviderRateLimited, _embed_one_with_backoff
+    retries with exponential backoff. We patch embed_entry_async directly to
+    isolate the runner's backoff — the OpenAI SDK does its own internal retries
+    on 429 which would otherwise swallow the signal before we see it."""
+    from unittest.mock import patch
 
-    _reset_entries()
-    with SessionLocal() as db:
-        db.add(Entry(id="r", entry_date=date(2026, 4, 1), title="t", content="c"))
-        db.commit()
+    import app.services.embedding_jobs as jobs
+    from app.services.embeddings import ProviderRateLimited
 
     calls = {"n": 0}
 
-    def _handler(request):
+    def fake_embed(entry_id: str) -> None:
         calls["n"] += 1
         if calls["n"] <= 2:
-            return httpx.Response(429, json={"error": "rate limit"})
-        return httpx.Response(200, json={"data": [{"embedding": [0.1]}], "model": "m1"})
+            raise ProviderRateLimited("simulated 429")
+        # third call succeeds
 
-    # Shortcut sleep for test speed
-    import app.services.embedding_jobs as jobs
     old_steps = jobs.BACKOFF_STEPS
     jobs.BACKOFF_STEPS = (0.01, 0.01, 0.01)
     try:
-        with respx.mock(base_url="https://api.openai.com/v1") as mock:
-            mock.post("/embeddings").mock(side_effect=_handler)
-            _a.run(_do_backfill())
+        with patch.object(jobs, "embed_entry_async", fake_embed):
+            _a.run(jobs._embed_one_with_backoff("any-id"))
     finally:
         jobs.BACKOFF_STEPS = old_steps
 
-    assert calls["n"] == 3  # 2 x 429 + 1 success
-    with SessionLocal() as db:
-        assert db.get(Entry, "r").embedding is not None
+    assert calls["n"] == 3  # 2 × 429 + 1 success
+
+
+def test_backoff_gives_up_after_all_retries():
+    """After len(BACKOFF_STEPS) + 1 = 4 attempts of ProviderRateLimited, the
+    runner logs a warning and returns without raising. The entry stays
+    unembedded; a later backfill pass will try again."""
+    from unittest.mock import patch
+
+    import app.services.embedding_jobs as jobs
+    from app.services.embeddings import ProviderRateLimited
+
+    calls = {"n": 0}
+
+    def always_429(entry_id: str) -> None:
+        calls["n"] += 1
+        raise ProviderRateLimited("persistent 429")
+
+    old_steps = jobs.BACKOFF_STEPS
+    jobs.BACKOFF_STEPS = (0.01, 0.01, 0.01)
+    try:
+        with patch.object(jobs, "embed_entry_async", always_429):
+            _a.run(jobs._embed_one_with_backoff("any-id"))
+    finally:
+        jobs.BACKOFF_STEPS = old_steps
+
+    assert calls["n"] == 4  # initial + 3 retries
 
 
 def test_request_coalescing():
