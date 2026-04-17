@@ -464,11 +464,13 @@ git add backend/app/services/export.py backend/tests/test_export.py
 git commit -m "feat(export): build_export_payload builder"
 ```
 
-### Task 5: `stream_export_zip` — ZIP-Generator
+### Task 5: `export_zip_bytes` — ZIP im Speicher bauen
 
 **Files:**
 - Modify: `backend/app/services/export.py`
 - Modify: `backend/tests/test_export.py`
+
+**Designentscheidung:** Kein `StreamingResponse`-Generator mit offener DB-Session. Export-Größe typischerweise <5MB; der Payload wird vollständig im Speicher gebaut, bevor die Response gesendet wird. Das schließt die DB-Session früh und vermeidet Threading-Risiken.
 
 - [ ] **Step 1: Write the failing test**
 
@@ -477,71 +479,76 @@ Hänge am Ende von `test_export.py` an:
 ```python
 import io
 import zipfile
-from app.services.export import stream_export_zip
+from datetime import date
+from app.services.export import export_zip_bytes
 
 
-def test_stream_export_zip_structure():
+def test_export_zip_bytes_structure():
     _clear()
     with SessionLocal() as db:
         db.add(Tag(name="work"))
         db.add(Entry(
             id=new_id(),
-            entry_date=__import__("datetime").date(2026, 4, 17),
+            entry_date=date(2026, 4, 17),
             title="T", content="C",
         ))
         db.commit()
-        chunks = list(stream_export_zip(db))
+        blob = export_zip_bytes(db)
 
-    buf = io.BytesIO(b"".join(chunks))
-    with zipfile.ZipFile(buf, "r") as zf:
+    assert isinstance(blob, bytes)
+    with zipfile.ZipFile(io.BytesIO(blob), "r") as zf:
         names = zf.namelist()
         assert names == ["entries.json"]
         data = json.loads(zf.read("entries.json").decode("utf-8"))
         assert data["version"] == "1"
         assert len(data["entries"]) == 1
         assert data["entries"][0]["title"] == "T"
+
+
+def test_export_timestamps_have_z_suffix():
+    _clear()
+    with SessionLocal() as db:
+        db.add(Entry(id=new_id(), entry_date=date(2026, 4, 17), title="TZ", content="c"))
+        db.commit()
+        payload = build_export_payload(db)
+    assert payload["exported_at"].endswith("Z")
+    assert payload["entries"][0]["created_at"].endswith("Z")
+    assert payload["entries"][0]["updated_at"].endswith("Z")
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [ ] **Step 2: Run tests to verify they fail**
 
-Run: `cd backend && .venv/bin/pytest tests/test_export.py::test_stream_export_zip_structure -v`
-Expected: FAIL mit „cannot import name 'stream_export_zip'".
+Run: `cd backend && .venv/bin/pytest tests/test_export.py -v`
+Expected: FAIL mit „cannot import name 'export_zip_bytes'" bzw. Z-Suffix-Assertion.
 
-- [ ] **Step 3: Implement `stream_export_zip`**
+- [ ] **Step 3: Implement `export_zip_bytes`**
 
 Hänge am Ende von `backend/app/services/export.py` an:
 
 ```python
 import io
 import zipfile
-from collections.abc import Iterator
 
 
-def stream_export_zip(db: Session) -> Iterator[bytes]:
-    """Erzeugt ein In-Memory-ZIP mit `entries.json` und gibt es als Byte-Chunks zurück."""
+def export_zip_bytes(db: Session) -> bytes:
+    """Baut ein In-Memory-ZIP mit `entries.json` und gibt den kompletten Payload zurück."""
     payload = build_export_payload(db)
     buf = io.BytesIO()
     with zipfile.ZipFile(buf, mode="w", compression=zipfile.ZIP_DEFLATED) as zf:
         zf.writestr("entries.json", json.dumps(payload, ensure_ascii=False, indent=2))
-    buf.seek(0)
-    chunk_size = 64 * 1024
-    while True:
-        chunk = buf.read(chunk_size)
-        if not chunk:
-            break
-        yield chunk
+    return buf.getvalue()
 ```
 
-- [ ] **Step 4: Run test to verify it passes**
+- [ ] **Step 4: Run tests to verify they pass**
 
 Run: `cd backend && .venv/bin/pytest tests/test_export.py -v`
-Expected: PASS (3 Tests).
+Expected: PASS (4 Tests).
 
 - [ ] **Step 5: Commit**
 
 ```bash
 git add backend/app/services/export.py backend/tests/test_export.py
-git commit -m "feat(export): stream_export_zip generator"
+git commit -m "feat(export): export_zip_bytes in-memory builder"
 ```
 
 ### Task 6: Route `GET /api/export`
@@ -551,11 +558,14 @@ git commit -m "feat(export): stream_export_zip generator"
 - Modify: `backend/app/main.py`
 - Modify: `backend/tests/test_export.py`
 
+**Auth-Hinweis:** `GET` wird von `CsrfMiddleware` nicht geprüft (nur POST/PUT/PATCH/DELETE). Ohne Session-Cookie greift `SessionAuthMiddleware` und liefert `401`. Der Auth-Test erwartet daher strikt `401`.
+
 - [ ] **Step 1: Write the failing route-level test**
 
 Hänge am Ende von `test_export.py` an:
 
 ```python
+from datetime import date
 from fastapi.testclient import TestClient
 from app.auth.sessions import create_session
 from app.main import app
@@ -564,7 +574,7 @@ from app.main import app
 def test_get_export_requires_auth():
     with TestClient(app) as c:
         r = c.get("/api/export")
-    assert r.status_code in (401, 403)
+    assert r.status_code == 401
 
 
 def test_get_export_returns_zip():
@@ -572,20 +582,19 @@ def test_get_export_returns_zip():
     with SessionLocal() as db:
         db.add(Entry(
             id=new_id(),
-            entry_date=__import__("datetime").date(2026, 4, 17),
+            entry_date=date(2026, 4, 17),
             title="Export-Test", content="Content",
         ))
         db.commit()
     sid = create_session()
     with TestClient(app) as c:
-        r = c.get("/api/export", cookies={"session": sid, "csrf": "t"})
+        r = c.get("/api/export", cookies={"session": sid})
     assert r.status_code == 200
     assert r.headers["content-type"] == "application/zip"
     assert "attachment" in r.headers["content-disposition"]
     assert "journalai-export-" in r.headers["content-disposition"]
 
-    buf = io.BytesIO(r.content)
-    with zipfile.ZipFile(buf, "r") as zf:
+    with zipfile.ZipFile(io.BytesIO(r.content), "r") as zf:
         data = json.loads(zf.read("entries.json").decode("utf-8"))
     assert data["version"] == "1"
     assert any(e["title"] == "Export-Test" for e in data["entries"])
@@ -594,7 +603,7 @@ def test_get_export_returns_zip():
 - [ ] **Step 2: Run test to verify it fails**
 
 Run: `cd backend && .venv/bin/pytest tests/test_export.py::test_get_export_returns_zip -v`
-Expected: FAIL mit 404 oder ähnlich (Route existiert noch nicht).
+Expected: FAIL mit 404 (Route existiert noch nicht).
 
 - [ ] **Step 3: Implement route**
 
@@ -602,29 +611,23 @@ Expected: FAIL mit 404 oder ähnlich (Route existiert noch nicht).
 # backend/app/routes/export.py
 """Export-Route: GET /api/export → ZIP-Download."""
 from fastapi import APIRouter
-from fastapi.responses import StreamingResponse
+from fastapi.responses import Response
 
 from app.db import SessionLocal
-from app.services.export import stream_export_zip
+from app.services.export import export_zip_bytes
 from app.utc import utc_now
 
 router = APIRouter(prefix="/api/export")
 
 
 @router.get("")
-async def export_zip() -> StreamingResponse:
-    db = SessionLocal()
+async def export_zip() -> Response:
+    with SessionLocal() as db:
+        blob = export_zip_bytes(db)
     date_tag = utc_now().date().isoformat()
     filename = f"journalai-export-{date_tag}.zip"
-
-    def _iter():
-        try:
-            yield from stream_export_zip(db)
-        finally:
-            db.close()
-
-    return StreamingResponse(
-        _iter(),
+    return Response(
+        content=blob,
         media_type="application/zip",
         headers={"Content-Disposition": f'attachment; filename="{filename}"'},
     )
@@ -869,6 +872,15 @@ def test_parse_rejects_missing_entries_json():
         parse_export_zip(buf.getvalue())
 
 
+def test_parse_rejects_extra_files():
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w") as zf:
+        zf.writestr("entries.json", json.dumps(_valid_payload()))
+        zf.writestr("extra.txt", "noise")
+    with pytest.raises(AppImportError, match="genau"):
+        parse_export_zip(buf.getvalue())
+
+
 def test_parse_rejects_wrong_version():
     p = _valid_payload()
     p["version"] = "2"
@@ -916,8 +928,11 @@ def parse_export_zip(blob: bytes) -> dict[str, Any]:
         raise ImportError("ungültiges ZIP") from exc
 
     with zf:
-        if "entries.json" not in zf.namelist():
-            raise ImportError("entries.json fehlt im ZIP")
+        names = set(zf.namelist())
+        if names != {"entries.json"}:
+            if "entries.json" not in names:
+                raise ImportError("entries.json fehlt im ZIP")
+            raise ImportError("ZIP muss genau entries.json enthalten")
         try:
             raw = zf.read("entries.json").decode("utf-8")
             payload = json.loads(raw)
@@ -951,19 +966,22 @@ git add backend/app/services/import_.py backend/tests/test_import.py
 git commit -m "feat(import): parse_export_zip validator"
 ```
 
-### Task 10: `plan_import` — Dry-Run-Berechnung
+### Task 10: `run_import` — Unified Path (Skeleton + new-entry + skip + dry-run Rollback)
 
 **Files:**
 - Modify: `backend/app/services/import_.py`
 - Modify: `backend/tests/test_import.py`
+
+**Designentscheidung (nach Codex-Review):** Statt getrennter `plan_import`/`apply_import` gibt es eine einzige Funktion `run_import(db, payload, *, mode, dry_run)`. Beide Pfade laufen durch dieselbe Validierung und denselben Apply-Code; der Dry-Run unterscheidet sich einzig darin, dass am Ende `db.rollback()` statt `db.commit()` aufgerufen wird. Damit sind Zahlen und `errors[]` in beiden Fällen garantiert identisch — genau wie die Spec es verlangt.
 
 - [ ] **Step 1: Write the failing tests**
 
 Hänge am Ende von `test_import.py` an:
 
 ```python
+from datetime import date
 from app.schemas.entries import new_id
-from app.services.import_ import plan_import
+from app.services.import_ import run_import
 
 
 def _clear():
@@ -974,135 +992,16 @@ def _clear():
         db.commit()
 
 
-def test_plan_empty_db_all_new():
-    _clear()
-    payload = _valid_payload()
-    with SessionLocal() as db:
-        plan = plan_import(db, payload)
-    assert plan["total_in_file"] == 1
-    assert plan["new_entries"] == 1
-    assert plan["conflicts"] == 0
-    assert plan["tags_new"] == 1
-    assert plan["tags_merged"] == 0
-
-
-def test_plan_conflict_counts_existing_ids():
-    _clear()
-    existing_id = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"
-    with SessionLocal() as db:
-        db.add(Entry(
-            id=existing_id,
-            entry_date=__import__("datetime").date(2026, 4, 1),
-            title="Existing", content="x",
-        ))
-        db.commit()
-        plan = plan_import(db, _valid_payload())
-    assert plan["new_entries"] == 0
-    assert plan["conflicts"] == 1
-
-
-def test_plan_tag_counts():
+def test_run_import_empty_db_skip_writes_all_new():
     _clear()
     with SessionLocal() as db:
-        db.add(Tag(name="work"))  # schon da
-        db.commit()
-        plan = plan_import(db, _valid_payload())
-    assert plan["tags_new"] == 0
-    assert plan["tags_merged"] == 1
-```
-
-- [ ] **Step 2: Run tests to verify they fail**
-
-Run: `cd backend && .venv/bin/pytest tests/test_import.py -v`
-Expected: FAIL (neue Tests, `plan_import` existiert nicht).
-
-- [ ] **Step 3: Implement `plan_import`**
-
-Hänge am Ende von `import_.py` an:
-
-```python
-from sqlalchemy.orm import Session
-
-from app.models.entry import Entry
-from app.models.tag import Tag
-
-
-def plan_import(db: Session, payload: dict[str, Any]) -> dict[str, Any]:
-    """Zählt Neu/Konflikte, ohne zu schreiben. Tag-Zählung ist modus-unabhängig."""
-    entries = payload.get("entries", [])
-    total = len(entries)
-    incoming_ids = {e["id"] for e in entries if isinstance(e, dict) and "id" in e}
-
-    existing_ids: set[str] = set()
-    if incoming_ids:
-        rows = db.query(Entry.id).filter(Entry.id.in_(incoming_ids)).all()
-        existing_ids = {r[0] for r in rows}
-
-    conflicts = len(existing_ids & incoming_ids)
-    new_entries = total - conflicts
-
-    incoming_tag_names: set[str] = set()
-    for t in payload.get("tags", []):
-        if isinstance(t, dict) and isinstance(t.get("name"), str):
-            incoming_tag_names.add(t["name"])
-    # Tags können auch nur über entries.tags[] kommen
-    for e in entries:
-        if isinstance(e, dict):
-            for name in e.get("tags", []) or []:
-                if isinstance(name, str):
-                    incoming_tag_names.add(name)
-
-    existing_tag_names: set[str] = set()
-    if incoming_tag_names:
-        rows = db.query(Tag.name).filter(Tag.name.in_(incoming_tag_names)).all()
-        existing_tag_names = {r[0] for r in rows}
-
-    tags_merged = len(existing_tag_names & incoming_tag_names)
-    tags_new = len(incoming_tag_names) - tags_merged
-
-    return {
-        "total_in_file": total,
-        "new_entries": new_entries,
-        "conflicts": conflicts,
-        "tags_new": tags_new,
-        "tags_merged": tags_merged,
-    }
-```
-
-- [ ] **Step 4: Run tests to verify they pass**
-
-Run: `cd backend && .venv/bin/pytest tests/test_import.py -v`
-Expected: PASS (8 Tests total).
-
-- [ ] **Step 5: Commit**
-
-```bash
-git add backend/app/services/import_.py backend/tests/test_import.py
-git commit -m "feat(import): plan_import dry-run calculator"
-```
-
-### Task 11: `apply_import` — Modus `skip`
-
-**Files:**
-- Modify: `backend/app/services/import_.py`
-- Modify: `backend/tests/test_import.py`
-
-- [ ] **Step 1: Write the failing test**
-
-Hänge am Ende von `test_import.py` an:
-
-```python
-from app.services.import_ import apply_import
-
-
-def test_apply_skip_new_entries_only():
-    _clear()
-    with SessionLocal() as db:
-        result = apply_import(db, _valid_payload(), mode="skip")
-        db.commit()
-    assert result["would_apply"] == 1
+        result = run_import(db, _valid_payload(), mode="skip", dry_run=False)
+    assert result["total_in_file"] == 1
     assert result["new_entries"] == 1
     assert result["conflicts"] == 0
+    assert result["would_apply"] == 1
+    assert result["tags_new"] == 1
+    assert result["tags_merged"] == 0
     assert result["errors"] == []
 
     with SessionLocal() as db:
@@ -1113,19 +1012,29 @@ def test_apply_skip_new_entries_only():
         assert tag_names == {"work"}
 
 
-def test_apply_skip_preserves_existing_on_conflict():
+def test_run_import_dry_run_rolls_back_all_writes():
+    _clear()
+    with SessionLocal() as db:
+        result = run_import(db, _valid_payload(), mode="skip", dry_run=True)
+    assert result["new_entries"] == 1
+    assert result["tags_new"] == 1
+
+    with SessionLocal() as db:
+        assert db.query(Entry).count() == 0
+        assert db.query(Tag).count() == 0
+
+
+def test_run_import_skip_preserves_existing_on_conflict():
     _clear()
     existing_id = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"
     with SessionLocal() as db:
         db.add(Entry(
             id=existing_id,
-            entry_date=__import__("datetime").date(2026, 4, 1),
+            entry_date=date(2026, 4, 1),
             title="ORIGINAL", content="orig",
         ))
         db.commit()
-
-        result = apply_import(db, _valid_payload(), mode="skip")
-        db.commit()
+        result = run_import(db, _valid_payload(), mode="skip", dry_run=False)
 
     assert result["new_entries"] == 0
     assert result["conflicts"] == 1
@@ -1133,20 +1042,34 @@ def test_apply_skip_preserves_existing_on_conflict():
 
     with SessionLocal() as db:
         e = db.get(Entry, existing_id)
-        assert e.title == "ORIGINAL"  # unverändert
+        assert e.title == "ORIGINAL"
+
+
+def test_run_import_rejects_invalid_mode():
+    _clear()
+    with SessionLocal() as db:
+        with pytest.raises(ImportError_, match="invalid mode"):
+            run_import(db, _valid_payload(), mode="nonsense", dry_run=False)
+```
+
+Ergänze am `test_import.py`-Top-Import-Block (direkt unter dem bestehenden `AppImportError`-Import) die Aliase:
+
+```python
+from app.services.import_ import ImportError as ImportError_
 ```
 
 - [ ] **Step 2: Run tests to verify they fail**
 
 Run: `cd backend && .venv/bin/pytest tests/test_import.py -v`
-Expected: FAIL.
+Expected: FAIL („cannot import name 'run_import'").
 
-- [ ] **Step 3: Implement `apply_import` with skip-mode**
+- [ ] **Step 3: Implement `run_import` (skip + new-entry path + dry-run Rollback)**
 
 Hänge am Ende von `import_.py` an:
 
 ```python
-from datetime import date as _date, datetime
+from datetime import date as _date
+from sqlalchemy.orm import Session
 
 from app.models.entry import Entry as EntryModel
 from app.models.tag import EntryTag, Tag as TagModel
@@ -1162,307 +1085,33 @@ def _parse_date(v: Any) -> _date:
     return _date.fromisoformat(str(v))
 
 
-def _ensure_tag(db: Session, name: str) -> None:
-    if db.get(TagModel, name) is None:
-        db.add(TagModel(name=name))
-
-
 def _set_entry_tags(db: Session, entry_id: str, names: list[str]) -> None:
     db.query(EntryTag).filter(EntryTag.entry_id == entry_id).delete()
     for n in set(names):
-        _ensure_tag(db, n)
         db.add(EntryTag(entry_id=entry_id, tag_name=n))
 
 
-def apply_import(
+def run_import(
     db: Session,
     payload: dict[str, Any],
     *,
     mode: str,
+    dry_run: bool,
 ) -> dict[str, Any]:
-    """Schreibt Import in die DB. Caller ist verantwortlich für Commit/Rollback."""
+    """Einheitlicher Import-Pfad: validiert + schreibt; bei dry_run rollback statt commit."""
     if mode not in VALID_MODES:
         raise ImportError(f"invalid mode: {mode!r}")
 
     entries = payload.get("entries", [])
-    existing_ids: set[str] = set()
-    incoming_ids = {e["id"] for e in entries if isinstance(e, dict) and "id" in e}
-    if incoming_ids:
-        rows = db.query(EntryModel.id).filter(EntryModel.id.in_(incoming_ids)).all()
-        existing_ids = {r[0] for r in rows}
 
-    # Ensure all tags exist first
-    tag_names_all: set[str] = set()
-    for t in payload.get("tags", []):
-        if isinstance(t, dict) and isinstance(t.get("name"), str):
-            tag_names_all.add(t["name"])
-    for e in entries:
-        if isinstance(e, dict):
-            for n in e.get("tags", []) or []:
-                if isinstance(n, str):
-                    tag_names_all.add(n)
-    for name in tag_names_all:
-        _ensure_tag(db, name)
-
-    new_count = 0
-    conflict_count = 0
-    errors: list[dict[str, Any]] = []
-
-    for idx, raw in enumerate(entries):
-        if not isinstance(raw, dict) or "id" not in raw:
-            errors.append({"index": idx, "id": None, "reason": "missing id"})
-            continue
-        eid = raw["id"]
-        is_conflict = eid in existing_ids
-
-        try:
-            entry_date = _parse_date(raw["entry_date"])
-            title = str(raw["title"])
-            content = str(raw["content"])
-            tags = list(raw.get("tags") or [])
-            raw_transcript = raw.get("raw_transcript")
-            chat_history = raw.get("chat_history")
-            chat_history_json = json.dumps(chat_history) if chat_history else None
-        except (KeyError, ValueError) as exc:
-            errors.append({"index": idx, "id": eid, "reason": str(exc)})
-            continue
-
-        if is_conflict:
-            conflict_count += 1
-            if mode == "skip":
-                continue
-            # copy/overwrite handled in later tasks — placeholder raises
-            raise NotImplementedError(f"mode {mode} wird in einem späteren Task implementiert")
-        else:
-            new_count += 1
-            db.add(EntryModel(
-                id=eid,
-                entry_date=entry_date,
-                title=title,
-                content=content,
-                raw_transcript=raw_transcript,
-                chat_history=chat_history_json,
-            ))
-            db.flush()  # damit EntryTag-FK auflösbar
-            _set_entry_tags(db, eid, tags)
-
-    would_apply = new_count if mode == "skip" else new_count + conflict_count
-
-    return {
-        "mode": mode,
-        "total_in_file": len(entries),
-        "new_entries": new_count,
-        "conflicts": conflict_count,
-        "would_apply": would_apply,
-        "tags_new": 0,  # wird in Task 13 korrekt gefüllt
-        "tags_merged": 0,
-        "errors": errors,
-    }
-```
-
-- [ ] **Step 4: Run tests to verify they pass**
-
-Run: `cd backend && .venv/bin/pytest tests/test_import.py -v`
-Expected: PASS (10 Tests total).
-
-- [ ] **Step 5: Commit**
-
-```bash
-git add backend/app/services/import_.py backend/tests/test_import.py
-git commit -m "feat(import): apply_import skip-mode"
-```
-
-### Task 12: `apply_import` — Modus `copy`
-
-**Files:**
-- Modify: `backend/app/services/import_.py`
-- Modify: `backend/tests/test_import.py`
-
-- [ ] **Step 1: Write the failing test**
-
-Hänge am Ende von `test_import.py` an:
-
-```python
-def test_apply_copy_creates_new_entry_on_conflict():
-    from datetime import date
-    _clear()
-    existing_id = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"
-    with SessionLocal() as db:
-        db.add(Entry(
-            id=existing_id,
-            entry_date=date(2026, 4, 1),
-            title="ORIGINAL", content="orig",
-        ))
-        db.commit()
-
-        result = apply_import(db, _valid_payload(), mode="copy")
-        db.commit()
-
-        all_entries = db.query(Entry).all()
-
-    assert result["conflicts"] == 1
-    assert result["new_entries"] == 0
-    assert result["would_apply"] == 1
-
-    assert len(all_entries) == 2
-    original = next(e for e in all_entries if e.id == existing_id)
-    copy = next(e for e in all_entries if e.id != existing_id)
-    assert original.title == "ORIGINAL"
-    assert copy.title == "T"  # aus _valid_payload
-    assert copy.entry_date.isoformat() == "2026-04-17"
-```
-
-- [ ] **Step 2: Run test to verify it fails**
-
-Run: `cd backend && .venv/bin/pytest tests/test_import.py::test_apply_copy_creates_new_entry_on_conflict -v`
-Expected: FAIL mit `NotImplementedError`.
-
-- [ ] **Step 3: Implement copy-mode**
-
-In `import_.py`, ersetze den Block
-
-```python
-        if is_conflict:
-            conflict_count += 1
-            if mode == "skip":
-                continue
-            # copy/overwrite handled in later tasks — placeholder raises
-            raise NotImplementedError(f"mode {mode} wird in einem späteren Task implementiert")
-```
-
-durch
-
-```python
-        if is_conflict:
-            conflict_count += 1
-            if mode == "skip":
-                continue
-            if mode == "copy":
-                new_id_val = new_entry_id()
-                db.add(EntryModel(
-                    id=new_id_val,
-                    entry_date=entry_date,
-                    title=title,
-                    content=content,
-                    raw_transcript=raw_transcript,
-                    chat_history=chat_history_json,
-                ))
-                db.flush()
-                _set_entry_tags(db, new_id_val, tags)
-                continue
-            # overwrite handled in Task 13
-            raise NotImplementedError(f"mode {mode} wird in einem späteren Task implementiert")
-```
-
-- [ ] **Step 4: Run tests to verify they pass**
-
-Run: `cd backend && .venv/bin/pytest tests/test_import.py -v`
-Expected: PASS (11 Tests total).
-
-- [ ] **Step 5: Commit**
-
-```bash
-git add backend/app/services/import_.py backend/tests/test_import.py
-git commit -m "feat(import): apply_import copy-mode"
-```
-
-### Task 13: `apply_import` — Modus `overwrite` + Tag-Zählung + Error-Collection
-
-**Files:**
-- Modify: `backend/app/services/import_.py`
-- Modify: `backend/tests/test_import.py`
-
-- [ ] **Step 1: Write the failing tests**
-
-Hänge am Ende von `test_import.py` an:
-
-```python
-def test_apply_overwrite_replaces_existing_and_invalidates_embedding():
-    from datetime import date, datetime
-    _clear()
-    existing_id = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"
-    with SessionLocal() as db:
-        db.add(Entry(
-            id=existing_id,
-            entry_date=date(2026, 4, 1),
-            title="ORIGINAL", content="orig",
-            embedding=b"\x00\x01\x02",
-            embedding_model="old-model",
-            embedding_updated_at=datetime(2026, 1, 1),
-        ))
-        db.commit()
-
-        result = apply_import(db, _valid_payload(), mode="overwrite")
-        db.commit()
-
-    assert result["conflicts"] == 1
-    assert result["would_apply"] == 1
-
-    with SessionLocal() as db:
-        e = db.get(Entry, existing_id)
-        assert e.title == "T"
-        assert e.content == "C"
-        assert e.embedding is None
-        assert e.embedding_model is None
-        assert e.embedding_updated_at is None
-
-
-def test_apply_collects_errors_but_continues():
-    _clear()
-    payload = _valid_payload()
-    payload["entries"].insert(0, {
-        "id": "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb",
-        "entry_date": "INVALID-DATE",
-        "title": "Bad", "content": "x",
-        "tags": [],
-    })
-    with SessionLocal() as db:
-        result = apply_import(db, payload, mode="skip")
-        db.commit()
-    assert len(result["errors"]) == 1
-    assert result["errors"][0]["id"] == "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb"
-    assert result["new_entries"] == 1  # der valide wurde geschrieben
-
-
-def test_apply_reports_tag_counts():
-    _clear()
-    with SessionLocal() as db:
-        db.add(Tag(name="work"))  # existiert bereits
-        db.commit()
-        result = apply_import(db, _valid_payload(), mode="skip")
-        db.commit()
-    assert result["tags_merged"] == 1
-    assert result["tags_new"] == 0
-```
-
-- [ ] **Step 2: Run tests to verify they fail**
-
-Run: `cd backend && .venv/bin/pytest tests/test_import.py -v`
-Expected: FAIL (overwrite-Test, Tag-Counts-Test).
-
-- [ ] **Step 3: Implement overwrite + tag-counts**
-
-Ersetze in `import_.py` die `apply_import`-Funktion komplett durch diese finale Version:
-
-```python
-def apply_import(
-    db: Session,
-    payload: dict[str, Any],
-    *,
-    mode: str,
-) -> dict[str, Any]:
-    """Schreibt Import in die DB. Caller ist verantwortlich für Commit/Rollback."""
-    if mode not in VALID_MODES:
-        raise ImportError(f"invalid mode: {mode!r}")
-
-    entries = payload.get("entries", [])
-    incoming_ids = {e["id"] for e in entries if isinstance(e, dict) and "id" in e}
+    # Existierende Entry-IDs
+    incoming_ids = {e["id"] for e in entries if isinstance(e, dict) and isinstance(e.get("id"), str)}
     existing_ids: set[str] = set()
     if incoming_ids:
         rows = db.query(EntryModel.id).filter(EntryModel.id.in_(incoming_ids)).all()
         existing_ids = {r[0] for r in rows}
 
-    # Sammle alle Tag-Namen aus tags[] + entries.tags[] und lege fehlende an
+    # Tag-Namen aus payload.tags[] und entries[*].tags[] sammeln (nur Strings)
     incoming_tag_names: set[str] = set()
     for t in payload.get("tags", []):
         if isinstance(t, dict) and isinstance(t.get("name"), str):
@@ -1489,56 +1138,39 @@ def apply_import(
     conflict_count = 0
     errors: list[dict[str, Any]] = []
 
-    for idx, raw in enumerate(entries):
-        if not isinstance(raw, dict) or "id" not in raw:
-            errors.append({"index": idx, "id": None, "reason": "missing id"})
-            continue
-        eid = raw["id"]
-        is_conflict = eid in existing_ids
-
-        try:
-            entry_date = _parse_date(raw["entry_date"])
-            title = str(raw["title"])
-            content = str(raw["content"])
-            tags = list(raw.get("tags") or [])
-            raw_transcript = raw.get("raw_transcript")
-            chat_history = raw.get("chat_history")
-            chat_history_json = json.dumps(chat_history) if chat_history else None
-        except (KeyError, ValueError) as exc:
-            errors.append({"index": idx, "id": eid, "reason": str(exc)})
-            continue
-
-        if is_conflict:
-            conflict_count += 1
-            if mode == "skip":
+    try:
+        for idx, raw in enumerate(entries):
+            if not isinstance(raw, dict) or not isinstance(raw.get("id"), str) or not raw["id"]:
+                errors.append({"index": idx, "id": None, "reason": "missing or invalid id"})
                 continue
-            if mode == "copy":
-                new_id_val = new_entry_id()
-                db.add(EntryModel(
-                    id=new_id_val,
-                    entry_date=entry_date,
-                    title=title,
-                    content=content,
-                    raw_transcript=raw_transcript,
-                    chat_history=chat_history_json,
-                ))
-                db.flush()
-                _set_entry_tags(db, new_id_val, tags)
+            eid = raw["id"]
+
+            # Per-Entry-Validierung — bei Fehler: errors.append + continue
+            # (Vollständige Variante folgt in Task 12.)
+            try:
+                entry_date = _parse_date(raw["entry_date"])
+                title = raw["title"]
+                content = raw["content"]
+                if not isinstance(title, str):
+                    raise ValueError("title must be str")
+                if not isinstance(content, str):
+                    raise ValueError("content must be str")
+                tags = list(raw.get("tags") or [])
+                raw_transcript = raw.get("raw_transcript")
+                chat_history = raw.get("chat_history")
+                chat_history_json = json.dumps(chat_history) if chat_history else None
+            except (KeyError, ValueError, TypeError) as exc:
+                errors.append({"index": idx, "id": eid, "reason": str(exc)})
                 continue
-            # overwrite
-            existing = db.get(EntryModel, eid)
-            existing.entry_date = entry_date
-            existing.title = title
-            existing.content = content
-            existing.raw_transcript = raw_transcript
-            existing.chat_history = chat_history_json
-            existing.updated_at = utc_now()
-            existing.embedding = None
-            existing.embedding_model = None
-            existing.embedding_updated_at = None
-            db.flush()
-            _set_entry_tags(db, eid, tags)
-        else:
+
+            is_conflict = eid in existing_ids
+            if is_conflict:
+                conflict_count += 1
+                if mode == "skip":
+                    continue
+                # copy/overwrite → Task 11
+                raise NotImplementedError(f"mode {mode} wird in Task 11 implementiert")
+
             new_count += 1
             db.add(EntryModel(
                 id=eid,
@@ -1550,13 +1182,19 @@ def apply_import(
             ))
             db.flush()
             _set_entry_tags(db, eid, tags)
+    except Exception:
+        db.rollback()
+        raise
 
-    if mode == "skip":
-        would_apply = new_count
+    would_apply = new_count if mode == "skip" else new_count + conflict_count
+
+    if dry_run:
+        db.rollback()
     else:
-        would_apply = new_count + conflict_count
+        db.commit()
 
     return {
+        "dry_run": dry_run,
         "mode": mode,
         "total_in_file": len(entries),
         "new_entries": new_count,
@@ -1571,21 +1209,338 @@ def apply_import(
 - [ ] **Step 4: Run tests to verify they pass**
 
 Run: `cd backend && .venv/bin/pytest tests/test_import.py -v`
-Expected: PASS (14 Tests total).
+Expected: PASS (9 Tests total — 5 parser + 4 new).
 
 - [ ] **Step 5: Commit**
 
 ```bash
 git add backend/app/services/import_.py backend/tests/test_import.py
-git commit -m "feat(import): apply_import overwrite + tag counts + error collection"
+git commit -m "feat(import): run_import unified path (skip + dry-run rollback)"
 ```
 
-### Task 14: Route `POST /api/import` mit Dry-Run
+### Task 11: `run_import` — Modi `copy` und `overwrite`
+
+**Files:**
+- Modify: `backend/app/services/import_.py`
+- Modify: `backend/tests/test_import.py`
+
+- [ ] **Step 1: Write the failing tests**
+
+Hänge am Ende von `test_import.py` an:
+
+```python
+def test_run_import_copy_creates_new_entry_on_conflict():
+    _clear()
+    existing_id = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"
+    with SessionLocal() as db:
+        db.add(Entry(
+            id=existing_id,
+            entry_date=date(2026, 4, 1),
+            title="ORIGINAL", content="orig",
+        ))
+        db.commit()
+        result = run_import(db, _valid_payload(), mode="copy", dry_run=False)
+
+        all_entries = db.query(Entry).all()
+
+    assert result["conflicts"] == 1
+    assert result["new_entries"] == 0
+    assert result["would_apply"] == 1
+    assert len(all_entries) == 2
+    original = next(e for e in all_entries if e.id == existing_id)
+    copy_entry = next(e for e in all_entries if e.id != existing_id)
+    assert original.title == "ORIGINAL"
+    assert copy_entry.title == "T"
+    assert copy_entry.entry_date.isoformat() == "2026-04-17"
+
+
+def test_run_import_overwrite_replaces_and_invalidates_embedding():
+    from datetime import datetime
+    _clear()
+    existing_id = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"
+    with SessionLocal() as db:
+        db.add(Entry(
+            id=existing_id,
+            entry_date=date(2026, 4, 1),
+            title="ORIGINAL", content="orig",
+            embedding=b"\x00\x01\x02",
+            embedding_model="old-model",
+            embedding_updated_at=datetime(2026, 1, 1),
+        ))
+        db.commit()
+        result = run_import(db, _valid_payload(), mode="overwrite", dry_run=False)
+
+    assert result["conflicts"] == 1
+    assert result["would_apply"] == 1
+
+    with SessionLocal() as db:
+        e = db.get(Entry, existing_id)
+        assert e.title == "T"
+        assert e.content == "C"
+        assert e.embedding is None
+        assert e.embedding_model is None
+        assert e.embedding_updated_at is None
+
+
+def test_run_import_overwrite_dry_run_does_not_mutate():
+    from datetime import datetime
+    _clear()
+    existing_id = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"
+    with SessionLocal() as db:
+        db.add(Entry(
+            id=existing_id,
+            entry_date=date(2026, 4, 1),
+            title="ORIGINAL", content="orig",
+            embedding=b"\x00\x01\x02",
+            embedding_model="old-model",
+        ))
+        db.commit()
+        run_import(db, _valid_payload(), mode="overwrite", dry_run=True)
+
+    with SessionLocal() as db:
+        e = db.get(Entry, existing_id)
+        assert e.title == "ORIGINAL"
+        assert e.embedding == b"\x00\x01\x02"
+        assert e.embedding_model == "old-model"
+```
+
+- [ ] **Step 2: Run tests to verify they fail**
+
+Run: `cd backend && .venv/bin/pytest tests/test_import.py -v`
+Expected: FAIL (`NotImplementedError` für `copy`/`overwrite`).
+
+- [ ] **Step 3: Implement `copy` und `overwrite`**
+
+In `import_.py`, im Body von `run_import`, ersetze den Block
+
+```python
+            is_conflict = eid in existing_ids
+            if is_conflict:
+                conflict_count += 1
+                if mode == "skip":
+                    continue
+                # copy/overwrite → Task 11
+                raise NotImplementedError(f"mode {mode} wird in Task 11 implementiert")
+
+            new_count += 1
+            db.add(EntryModel(
+                id=eid,
+                entry_date=entry_date,
+                title=title,
+                content=content,
+                raw_transcript=raw_transcript,
+                chat_history=chat_history_json,
+            ))
+            db.flush()
+            _set_entry_tags(db, eid, tags)
+```
+
+durch
+
+```python
+            is_conflict = eid in existing_ids
+            if is_conflict:
+                conflict_count += 1
+                if mode == "skip":
+                    continue
+                if mode == "copy":
+                    new_id_val = new_entry_id()
+                    db.add(EntryModel(
+                        id=new_id_val,
+                        entry_date=entry_date,
+                        title=title,
+                        content=content,
+                        raw_transcript=raw_transcript,
+                        chat_history=chat_history_json,
+                    ))
+                    db.flush()
+                    _set_entry_tags(db, new_id_val, tags)
+                    continue
+                # overwrite
+                existing = db.get(EntryModel, eid)
+                existing.entry_date = entry_date
+                existing.title = title
+                existing.content = content
+                existing.raw_transcript = raw_transcript
+                existing.chat_history = chat_history_json
+                existing.updated_at = utc_now()
+                existing.embedding = None
+                existing.embedding_model = None
+                existing.embedding_updated_at = None
+                db.flush()
+                _set_entry_tags(db, eid, tags)
+                continue
+
+            new_count += 1
+            db.add(EntryModel(
+                id=eid,
+                entry_date=entry_date,
+                title=title,
+                content=content,
+                raw_transcript=raw_transcript,
+                chat_history=chat_history_json,
+            ))
+            db.flush()
+            _set_entry_tags(db, eid, tags)
+```
+
+- [ ] **Step 4: Run tests to verify they pass**
+
+Run: `cd backend && .venv/bin/pytest tests/test_import.py -v`
+Expected: PASS (12 Tests total).
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add backend/app/services/import_.py backend/tests/test_import.py
+git commit -m "feat(import): run_import copy + overwrite modes"
+```
+
+### Task 12: Per-Entry-Validierung schärfen + Error-Collection
+
+**Files:**
+- Modify: `backend/app/services/import_.py`
+- Modify: `backend/tests/test_import.py`
+
+**Spec-Bezug:** Pro-Entry-Fehler (z.B. invalides Datum, Titel zu lang, falsche Typen) landen in `errors[]`; valide Einträge laufen durch. Die Validierung prüft `isinstance` statt `str(...)`, damit invalide Typen nicht stumm kaschiert werden.
+
+- [ ] **Step 1: Write the failing tests**
+
+Hänge am Ende von `test_import.py` an:
+
+```python
+def test_validation_collects_errors_but_continues():
+    _clear()
+    payload = _valid_payload()
+    payload["entries"].insert(0, {
+        "id": "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb",
+        "entry_date": "INVALID-DATE",
+        "title": "Bad", "content": "x",
+        "tags": [],
+    })
+    with SessionLocal() as db:
+        result = run_import(db, payload, mode="skip", dry_run=False)
+    assert len(result["errors"]) == 1
+    assert result["errors"][0]["id"] == "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb"
+    assert result["new_entries"] == 1
+
+
+def test_validation_rejects_title_too_long():
+    _clear()
+    payload = _valid_payload()
+    payload["entries"][0]["title"] = "x" * 201
+    with SessionLocal() as db:
+        result = run_import(db, payload, mode="skip", dry_run=False)
+    assert len(result["errors"]) == 1
+    assert "title" in result["errors"][0]["reason"]
+
+
+def test_validation_rejects_non_string_content():
+    _clear()
+    payload = _valid_payload()
+    payload["entries"][0]["content"] = 42  # int, not str
+    with SessionLocal() as db:
+        result = run_import(db, payload, mode="skip", dry_run=False)
+    assert len(result["errors"]) == 1
+    assert "content" in result["errors"][0]["reason"]
+
+
+def test_validation_rejects_non_list_chat_history():
+    _clear()
+    payload = _valid_payload()
+    payload["entries"][0]["chat_history"] = "not-a-list"
+    with SessionLocal() as db:
+        result = run_import(db, payload, mode="skip", dry_run=False)
+    assert len(result["errors"]) == 1
+    assert "chat_history" in result["errors"][0]["reason"]
+
+
+def test_run_import_reports_tag_counts_after_merge():
+    _clear()
+    with SessionLocal() as db:
+        db.add(Tag(name="work"))
+        db.commit()
+        result = run_import(db, _valid_payload(), mode="skip", dry_run=False)
+    assert result["tags_merged"] == 1
+    assert result["tags_new"] == 0
+```
+
+- [ ] **Step 2: Run tests to verify they fail**
+
+Run: `cd backend && .venv/bin/pytest tests/test_import.py -v`
+Expected: FAIL (Validierung noch zu lax).
+
+- [ ] **Step 3: Tighten validation block**
+
+In `import_.py`, im Body von `run_import`, ersetze den inneren `try`-Block
+
+```python
+            try:
+                entry_date = _parse_date(raw["entry_date"])
+                title = raw["title"]
+                content = raw["content"]
+                if not isinstance(title, str):
+                    raise ValueError("title must be str")
+                if not isinstance(content, str):
+                    raise ValueError("content must be str")
+                tags = list(raw.get("tags") or [])
+                raw_transcript = raw.get("raw_transcript")
+                chat_history = raw.get("chat_history")
+                chat_history_json = json.dumps(chat_history) if chat_history else None
+            except (KeyError, ValueError, TypeError) as exc:
+                errors.append({"index": idx, "id": eid, "reason": str(exc)})
+                continue
+```
+
+durch die strengere Variante
+
+```python
+            try:
+                entry_date = _parse_date(raw["entry_date"])
+                title = raw["title"]
+                if not isinstance(title, str):
+                    raise ValueError("title must be str")
+                if len(title) > 200:
+                    raise ValueError("title too long (max 200)")
+                content = raw["content"]
+                if not isinstance(content, str):
+                    raise ValueError("content must be str")
+                tags_raw = raw.get("tags") or []
+                if not isinstance(tags_raw, list) or any(not isinstance(t, str) for t in tags_raw):
+                    raise ValueError("tags must be list[str]")
+                tags = list(tags_raw)
+                raw_transcript = raw.get("raw_transcript")
+                if raw_transcript is not None and not isinstance(raw_transcript, str):
+                    raise ValueError("raw_transcript must be str or null")
+                chat_history = raw.get("chat_history")
+                if chat_history is not None and not isinstance(chat_history, list):
+                    raise ValueError("chat_history must be list or null")
+                chat_history_json = json.dumps(chat_history) if chat_history else None
+            except (KeyError, ValueError, TypeError) as exc:
+                errors.append({"index": idx, "id": eid, "reason": str(exc)})
+                continue
+```
+
+- [ ] **Step 4: Run tests to verify they pass**
+
+Run: `cd backend && .venv/bin/pytest tests/test_import.py -v`
+Expected: PASS (17 Tests total).
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add backend/app/services/import_.py backend/tests/test_import.py
+git commit -m "feat(import): strict per-entry validation + error collection"
+```
+
+### Task 13: Route `POST /api/import` mit Dry-Run, Rate-Limit und Backfill-Trigger
 
 **Files:**
 - Create: `backend/app/routes/import_.py`
 - Modify: `backend/app/main.py`
 - Modify: `backend/tests/test_import.py`
+
+**Auth/CSRF-Hinweis:** `POST` durchläuft zuerst CSRF (Cookie + Header müssen matchen), danach SessionAuth. Der Auth-Test sendet gültige CSRF-Cookies, aber kein Session-Cookie → erwartet `401` (nicht `403`).
 
 - [ ] **Step 1: Write failing route tests**
 
@@ -1600,10 +1555,28 @@ HEADERS = {"x-csrf-token": "t"}
 def _cookies(sid): return {"session": sid, "csrf": "t"}
 
 
-def test_import_requires_auth():
+def test_import_requires_auth_with_valid_csrf():
+    """Mit gültigem CSRF-Double-Submit, aber ohne Session → 401."""
     with TestClient(app) as c:
-        r = c.post("/api/import", data={"mode": "skip", "dry_run": "true"})
-    assert r.status_code in (401, 403)
+        r = c.post(
+            "/api/import",
+            data={"mode": "skip", "dry_run": "true"},
+            files={"file": ("export.zip", b"", "application/zip")},
+            cookies={"csrf": "t"},
+            headers=HEADERS,
+        )
+    assert r.status_code == 401
+
+
+def test_import_rejects_without_csrf():
+    """Ohne CSRF-Header/Cookie → 403."""
+    with TestClient(app) as c:
+        r = c.post(
+            "/api/import",
+            data={"mode": "skip", "dry_run": "true"},
+            files={"file": ("export.zip", b"", "application/zip")},
+        )
+    assert r.status_code == 403
 
 
 def test_import_dry_run_does_not_mutate():
@@ -1674,6 +1647,26 @@ def test_import_rejects_invalid_mode():
             headers=HEADERS,
         )
     assert r.status_code == 400
+
+
+def test_import_rate_limit_6th_request_is_429():
+    """5/min Rate-Limit greift beim 6. Request."""
+    _clear()
+    sid = create_session()
+    zip_bytes = _zip_with(_valid_payload())
+    with TestClient(app) as c:
+        statuses = []
+        for i in range(6):
+            # Jeder Request mit anderem Payload-Inhalt, damit DB unique bleibt
+            statuses.append(c.post(
+                "/api/import",
+                data={"mode": "skip", "dry_run": "true"},
+                files={"file": ("export.zip", zip_bytes, "application/zip")},
+                cookies=_cookies(sid),
+                headers=HEADERS,
+            ).status_code)
+    assert statuses[:5] == [200] * 5
+    assert statuses[5] == 429
 ```
 
 - [ ] **Step 2: Run tests to verify they fail**
@@ -1696,9 +1689,8 @@ from app.services.embedding_jobs import request_backfill
 from app.services.import_ import (
     ImportError as AppImportError,
     VALID_MODES,
-    apply_import,
     parse_export_zip,
-    plan_import,
+    run_import,
 )
 
 logger = logging.getLogger(__name__)
@@ -1727,37 +1719,16 @@ async def import_zip(
         raise HTTPException(400, "Import fehlgeschlagen — ZIP prüfen") from exc
 
     with SessionLocal() as db:
-        if is_dry:
-            plan = plan_import(db, payload)
-            return {
-                "dry_run": True,
-                "mode": mode,
-                **plan,
-                "would_apply": _would_apply(plan, mode),
-                "errors": [],
-            }
-
         try:
-            result = apply_import(db, payload, mode=mode)
-            db.commit()
+            result = run_import(db, payload, mode=mode, dry_run=is_dry)
         except AppImportError as exc:
-            db.rollback()
             raise HTTPException(400, str(exc)) from exc
-        except Exception:
-            db.rollback()
-            raise
 
-    # Nach overwrite ggf. Backfill anwerfen
-    if mode == "overwrite":
+    # Nach echtem overwrite ggf. Backfill anwerfen
+    if not is_dry and mode == "overwrite":
         request_backfill()
 
-    return {"dry_run": False, **result}
-
-
-def _would_apply(plan: dict, mode: str) -> int:
-    if mode == "skip":
-        return plan["new_entries"]
-    return plan["new_entries"] + plan["conflicts"]
+    return result
 ```
 
 - [ ] **Step 4: Register router in main.py**
@@ -1777,16 +1748,16 @@ app.include_router(import_router)
 - [ ] **Step 5: Run tests to verify they pass**
 
 Run: `cd backend && .venv/bin/pytest tests/test_import.py -v`
-Expected: PASS (19 Tests total).
+Expected: PASS (24 Tests total — 5 parser + 13 run_import + 6 routes).
 
 - [ ] **Step 6: Commit**
 
 ```bash
 git add backend/app/routes/import_.py backend/app/main.py backend/tests/test_import.py
-git commit -m "feat(import): POST /api/import with dry-run, modes, rate limit"
+git commit -m "feat(import): POST /api/import with dry-run, modes, rate limit, backfill trigger"
 ```
 
-### Task 15: Frontend — Import-UI in DataPortability
+### Task 14: Frontend — Import-UI in DataPortability (mit Toast + Navigate)
 
 **Files:**
 - Modify: `frontend/src/lib/portability.ts`
@@ -1915,30 +1886,32 @@ Expected: PASS (3 Tests).
 
 - [ ] **Step 5: Extend DataPortability component with import UI**
 
+**Spec-Anforderung:** Nach erfolgreichem echten Import: Toast + Navigation nach `/entries`. Toast-API im Repo ist `import { toast } from "$lib/stores/toast"` mit `toast.success(msg)`, `toast.error(msg)`, `toast.info(msg)`.
+
 Ersetze `frontend/src/lib/components/DataPortability.svelte` durch:
 
 ```svelte
 <script lang="ts">
+  import { goto } from "$app/navigation";
   import { exportUrl, importZip, type ImportMode, type ImportResult } from "$lib/portability";
+  import { toast } from "$lib/stores/toast";
 
   let file = $state<File | null>(null);
   let mode = $state<ImportMode>("skip");
   let preview = $state<ImportResult | null>(null);
   let importing = $state(false);
-  let error = $state<string | null>(null);
-  let success = $state<string | null>(null);
+  let localError = $state<string | null>(null);
 
   async function onFileChange(ev: Event) {
     const input = ev.target as HTMLInputElement;
     file = input.files?.[0] ?? null;
     preview = null;
-    error = null;
-    success = null;
+    localError = null;
     if (!file) return;
     try {
       preview = await importZip(file, mode, true);
     } catch (e) {
-      error = `Vorschau fehlgeschlagen: ${(e as Error).message}`;
+      localError = `Vorschau fehlgeschlagen: ${(e as Error).message}`;
     }
   }
 
@@ -1946,25 +1919,27 @@ Ersetze `frontend/src/lib/components/DataPortability.svelte` durch:
     if (!file) return;
     try {
       preview = await importZip(file, mode, true);
-      error = null;
+      localError = null;
     } catch (e) {
-      error = `Vorschau fehlgeschlagen: ${(e as Error).message}`;
+      localError = `Vorschau fehlgeschlagen: ${(e as Error).message}`;
     }
   }
 
   async function runImport() {
     if (!file) return;
     importing = true;
-    error = null;
-    success = null;
+    localError = null;
     try {
       const result = await importZip(file, mode, false);
-      success =
-        `Import abgeschlossen — ${result.new_entries} neu, `
-        + `${result.conflicts} Konflikte (Modus: ${result.mode})`;
+      toast.success(
+        `Import abgeschlossen — ${result.new_entries} neu, ${result.conflicts} Konflikte (Modus: ${result.mode})`,
+      );
       preview = result;
+      await goto("/entries");
     } catch (e) {
-      error = `Import fehlgeschlagen: ${(e as Error).message}`;
+      const msg = (e as Error).message;
+      toast.error(`Import fehlgeschlagen: ${msg}`);
+      localError = msg;
     } finally {
       importing = false;
     }
@@ -2029,8 +2004,7 @@ Ersetze `frontend/src/lib/components/DataPortability.svelte` durch:
       </div>
     {/if}
 
-    {#if error}<p class="error">{error}</p>{/if}
-    {#if success}<p class="success">{success}</p>{/if}
+    {#if localError}<p class="error">{localError}</p>{/if}
   </div>
 </section>
 
@@ -2066,7 +2040,6 @@ Ersetze `frontend/src/lib/components/DataPortability.svelte` durch:
   }
   .preview select { min-height: 36px; }
   .error { color: #b91c1c; }
-  .success { color: #065f46; }
 </style>
 ```
 
@@ -2077,10 +2050,10 @@ Expected: keine Typ-Fehler, 3 Tests PASS.
 
 ```bash
 git add frontend/src/lib/portability.ts frontend/src/lib/components/DataPortability.svelte frontend/tests/portability.test.ts
-git commit -m "feat(import): settings UI with dry-run preview + mode selector"
+git commit -m "feat(import): settings UI with dry-run preview + toast + navigate"
 ```
 
-### Task 16: Roadmap-Update nach Teil 3
+### Task 15: Roadmap-Update nach Teil 3
 
 **Files:**
 - Modify: `/home/julian/.claude/projects/-home-julian-Projekte-journalAI/memory/roadmap.md`
@@ -2099,7 +2072,7 @@ Datum aktualisieren.
 
 # Teil 4: Polish-Items
 
-### Task 17: Playwright E2E live — Durchlauf + README-Runbook
+### Task 16: Playwright E2E live — Durchlauf + README-Runbook
 
 **Files:**
 - Modify: `README.md`
@@ -2149,7 +2122,7 @@ git add README.md
 git commit -m "docs(e2e): runbook for live Playwright runs"
 ```
 
-### Task 18: MP3-Concat Live-Validierung — Docstring aktualisieren
+### Task 17: MP3-Concat Live-Validierung — Docstring aktualisieren
 
 **Files:**
 - Modify: `backend/app/services/tts.py`
@@ -2178,7 +2151,7 @@ git add backend/app/services/tts.py
 git commit -m "docs(tts): validated chunking with OpenAI + Kokoro + Piper"
 ```
 
-### Task 19: Roadmap-Update nach Teil 4
+### Task 18: Roadmap-Update nach Teil 4
 
 **Files:**
 - Modify: `/home/julian/.claude/projects/-home-julian-Projekte-journalAI/memory/roadmap.md`
@@ -2205,7 +2178,7 @@ Beispiel für neuen Phase-4-Block:
 
 # Abschluss
 
-### Task 20: Gesamt-Verifikation
+### Task 19: Gesamt-Verifikation
 
 - [ ] **Step 1: Alle Backend-Tests laufen**
 
@@ -2241,7 +2214,7 @@ Memory-Datei nochmal gegenchecken — Phase 4 sauber als „Erledigt" markiert? 
 
 ## Zusammenfassung
 
-- **20 Tasks**, ~120 kleine Steps.
+- **19 Tasks**, ~110 kleine Steps.
 - Kritische TDD-Punkte: Alle Backend-Services (export.py, import_.py) und `importZip`-Client.
 - Pagination und Settings-Integration sind primär UI-Arbeit mit leichtem Test-Anteil.
 - Polish-Items erzeugen keine neuen Tests (nur Doku + manuelle Validierung).

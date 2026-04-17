@@ -211,11 +211,7 @@ Response: application/json (s.u.)
 
 ### Backend
 
-- `GET /api/entries` unterstützt bereits `offset`/`limit`.
-- **Zusätzlich:** Response-Shape minimal erweitern, damit der Client „Mehr laden" sauber ausblenden kann:
-  - Entweder: Response als Objekt `{ entries: [...], total: 137 }` (kleiner Breaking Change, aber nur 1 Frontend-Call).
-  - Oder: `X-Total-Count`-Header setzen (non-breaking).
-- **Entscheidung:** Object-Shape mit `total`. Da es nur einen Client gibt, lohnt sich das Header-Drumherum nicht, und `total` ist auch für die „X von Y"-Anzeige hilfreich.
+- `GET /api/entries` liefert bereits `{ total: int, items: Entry[] }` — keine Server-Änderung nötig. Der Client nutzt `total` für den „Mehr laden"-Button.
 
 ### Frontend
 
