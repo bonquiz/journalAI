@@ -125,14 +125,23 @@ def run_import(
             try:
                 entry_date = _parse_date(raw["entry_date"])
                 title = raw["title"]
-                content = raw["content"]
                 if not isinstance(title, str):
                     raise ValueError("title must be str")
+                if len(title) > 200:
+                    raise ValueError("title too long (max 200)")
+                content = raw["content"]
                 if not isinstance(content, str):
                     raise ValueError("content must be str")
-                tags = list(raw.get("tags") or [])
+                tags_raw = raw.get("tags") or []
+                if not isinstance(tags_raw, list) or any(not isinstance(t, str) for t in tags_raw):
+                    raise ValueError("tags must be list[str]")
+                tags = list(tags_raw)
                 raw_transcript = raw.get("raw_transcript")
+                if raw_transcript is not None and not isinstance(raw_transcript, str):
+                    raise ValueError("raw_transcript must be str or null")
                 chat_history = raw.get("chat_history")
+                if chat_history is not None and not isinstance(chat_history, list):
+                    raise ValueError("chat_history must be list or null")
                 chat_history_json = json.dumps(chat_history) if chat_history else None
             except (KeyError, ValueError, TypeError) as exc:
                 errors.append({"index": idx, "id": eid, "reason": str(exc)})

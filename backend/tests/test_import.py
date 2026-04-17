@@ -245,3 +245,59 @@ def test_run_import_overwrite_dry_run_does_not_mutate():
         assert e.title == "ORIGINAL"
         assert e.embedding == b"\x00\x01\x02"
         assert e.embedding_model == "old-model"
+
+
+def test_validation_collects_errors_but_continues():
+    _clear()
+    payload = _valid_payload()
+    payload["entries"].insert(0, {
+        "id": "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb",
+        "entry_date": "INVALID-DATE",
+        "title": "Bad", "content": "x",
+        "tags": [],
+    })
+    with SessionLocal() as db:
+        result = run_import(db, payload, mode="skip", dry_run=False)
+    assert len(result["errors"]) == 1
+    assert result["errors"][0]["id"] == "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb"
+    assert result["new_entries"] == 1
+
+
+def test_validation_rejects_title_too_long():
+    _clear()
+    payload = _valid_payload()
+    payload["entries"][0]["title"] = "x" * 201
+    with SessionLocal() as db:
+        result = run_import(db, payload, mode="skip", dry_run=False)
+    assert len(result["errors"]) == 1
+    assert "title" in result["errors"][0]["reason"]
+
+
+def test_validation_rejects_non_string_content():
+    _clear()
+    payload = _valid_payload()
+    payload["entries"][0]["content"] = 42  # int, not str
+    with SessionLocal() as db:
+        result = run_import(db, payload, mode="skip", dry_run=False)
+    assert len(result["errors"]) == 1
+    assert "content" in result["errors"][0]["reason"]
+
+
+def test_validation_rejects_non_list_chat_history():
+    _clear()
+    payload = _valid_payload()
+    payload["entries"][0]["chat_history"] = "not-a-list"
+    with SessionLocal() as db:
+        result = run_import(db, payload, mode="skip", dry_run=False)
+    assert len(result["errors"]) == 1
+    assert "chat_history" in result["errors"][0]["reason"]
+
+
+def test_run_import_reports_tag_counts_after_merge():
+    _clear()
+    with SessionLocal() as db:
+        db.add(Tag(name="work"))
+        db.commit()
+        result = run_import(db, _valid_payload(), mode="skip", dry_run=False)
+    assert result["tags_merged"] == 1
+    assert result["tags_new"] == 0
