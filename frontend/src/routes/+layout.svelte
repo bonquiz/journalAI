@@ -22,7 +22,8 @@
   <a href="/" class="brand">journalAI</a>
   {#if $session.authenticated}
     <nav>
-      <a href="/entries">Einträge</a>
+      <a href="/new" class="cta">Eintrag erfassen</a>
+      <a href="/entries">Einträge anzeigen</a>
       <a href="/tags">Tags</a>
       <a href="/settings">Einstellungen</a>
       <button type="button" onclick={() => session.logout()} class="link">Logout</button>
@@ -64,6 +65,15 @@
     display: inline-flex;
     align-items: center;
   }
+  nav a.cta {
+    background: var(--accent);
+    color: var(--on-accent, #fff);
+    padding: 0.4rem 0.9rem;
+    border-radius: 0.4rem;
+    text-decoration: none;
+    font-weight: 600;
+  }
+  nav a.cta:hover { filter: brightness(1.1); }
 
   @media (max-width: 600px) {
     .topbar { padding: 0.5rem 0.75rem; }
