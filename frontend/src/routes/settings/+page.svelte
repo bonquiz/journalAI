@@ -4,6 +4,7 @@
   import { getSearchStatus, reindexEmbeddings, type SearchStatus } from "$lib/search";
   import DataPortability from "$lib/components/DataPortability.svelte";
   import ModelMismatchDialog from "$lib/components/ModelMismatchDialog.svelte";
+  import { envHint } from "$lib/settings-env-hint";
 
   type SettingsOut = {
     stt_base_url: string | null; stt_api_key_masked: string | null; stt_model: string | null;
@@ -13,6 +14,10 @@
     system_prompt: string | null;
     tts_voice: string | null; tts_speed: number | null;
     totp_enabled: boolean;
+    stt_resolved_base_url: string | null; stt_resolved_model: string | null;
+    chat_resolved_base_url: string | null; chat_resolved_model: string | null;
+    embed_resolved_base_url: string | null; embed_resolved_model: string | null;
+    tts_resolved_base_url: string | null; tts_resolved_model: string | null;
   };
 
   type EmbeddingMismatch = { old_model: string; new_model: string; affected_entries: number };
@@ -129,6 +134,9 @@
         <label>
           Base URL
           <input bind:value={form[`${cap}_base_url`]} placeholder={s[`${cap}_base_url`] ?? ""} />
+          {#if envHint(form[`${cap}_base_url`] as string | null, s[`${cap}_resolved_base_url`])}
+            <small class="env-hint">aus ENV: {envHint(form[`${cap}_base_url`] as string | null, s[`${cap}_resolved_base_url`])}</small>
+          {/if}
         </label>
         <label>
           API Key
@@ -138,6 +146,9 @@
         <label>
           Model
           <input bind:value={form[`${cap}_model`]} placeholder={s[`${cap}_model`] ?? ""} />
+          {#if envHint(form[`${cap}_model`] as string | null, s[`${cap}_resolved_model`])}
+            <small class="env-hint">aus ENV: {envHint(form[`${cap}_model`] as string | null, s[`${cap}_resolved_model`])}</small>
+          {/if}
         </label>
       </fieldset>
     {/each}
@@ -249,4 +260,10 @@
   }
   img { max-width: 240px; }
   .muted { color: var(--muted); font-size: 0.85em; margin-left: 0.5em; }
+  .env-hint {
+    display: block;
+    margin-top: 0.25rem;
+    color: var(--muted, #888);
+    font-size: 0.85rem;
+  }
 </style>
