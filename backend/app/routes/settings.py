@@ -9,6 +9,7 @@ from app.models.entry import Entry
 from app.models.entry_embedding import EntryEmbedding
 from app.models.settings import AppSettings
 from app.schemas.settings import PasswordChange, SettingsOut, SettingsPatch
+from app.services.llm_client import resolved_base_url, resolved_model
 
 router = APIRouter(prefix="/api/settings")
 
@@ -25,15 +26,23 @@ def _settings_to_out(s: AppSettings) -> SettingsOut:
         stt_base_url=s.stt_base_url,
         stt_api_key_masked=_mask(s.stt_api_key_wrapped),
         stt_model=s.stt_model,
+        stt_resolved_base_url=resolved_base_url("stt"),
+        stt_resolved_model=resolved_model("stt"),
         chat_base_url=s.chat_base_url,
         chat_api_key_masked=_mask(s.chat_api_key_wrapped),
         chat_model=s.chat_model,
+        chat_resolved_base_url=resolved_base_url("chat"),
+        chat_resolved_model=resolved_model("chat"),
         embed_base_url=s.embed_base_url,
         embed_api_key_masked=_mask(s.embed_api_key_wrapped),
         embed_model=s.embed_model,
+        embed_resolved_base_url=resolved_base_url("embed"),
+        embed_resolved_model=resolved_model("embed"),
         tts_base_url=s.tts_base_url,
         tts_api_key_masked=_mask(s.tts_api_key_wrapped),
         tts_model=s.tts_model,
+        tts_resolved_base_url=resolved_base_url("tts"),
+        tts_resolved_model=resolved_model("tts"),
         tts_voice=s.tts_voice,
         tts_speed=s.tts_speed,
         system_prompt=s.system_prompt,
