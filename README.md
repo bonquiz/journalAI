@@ -46,7 +46,7 @@ deaktiviert, weil sie echte Requests an OpenAI-kompatible Endpoints senden (Kost
 ```bash
 cd frontend
 E2E_LIVE=1 \
-  OPENAI_API_KEY=sk-... \
+  OPENAI_API_KEY=<your-openai-key> \
   OPENAI_BASE_URL=https://api.openai.com/v1 \
   npx playwright test
 ```

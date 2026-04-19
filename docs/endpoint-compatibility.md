@@ -37,7 +37,7 @@ arbitrary model identifiers, so you must set `{CAP}_MODEL` (or the DB override) 
 ### Minimum (all-OpenAI)
 
 ```env
-OPENAI_API_KEY=sk-...
+OPENAI_API_KEY=<your-openai-key>
 # Everything else can stay blank — defaults resolve to api.openai.com with
 # whisper-1 / gpt-4o-mini / text-embedding-3-small / tts-1.
 ```

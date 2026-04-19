@@ -4,6 +4,25 @@
 !.env.example
 !.env.local-llm.example
 !.env.hetzner.example
+
+# Beliebige Credential-Files (Tokens, Passwörter, API-Keys im Klartext)
+credentials
+credentials.*
+credentials/
+
+# SSH-Keys und Zertifikate — Secret-Material, nie im Repo
+.ssh/
+id_rsa*
+id_ed25519*
+id_ecdsa*
+id_dsa*
+*.pem
+*.key
+*.pfx
+*.p12
+authorized_keys
+known_hosts
+
 data/
 *.db
 *.db-wal
