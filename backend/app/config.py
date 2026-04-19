@@ -36,6 +36,8 @@ class Settings(BaseSettings):
     tts_base_url: str = "https://api.openai.com/v1"
     tts_api_key: str = ""
     tts_model: str = "tts-1"
+    tts_voice: str = ""
+    tts_speed: float | None = None
 
     def resolve_api_key(self, capability: str) -> str:
         """Return the effective API key for a capability.

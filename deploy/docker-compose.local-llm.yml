@@ -34,11 +34,17 @@ services:
     environment:
       - WHISPER__MODEL=${STT_MODEL}
 
+  # TTS: openedai-speech (Piper-Wrapper) — echtes Deutsch via
+  # de_DE-thorsten-high und andere Piper-Voices. Service-Name "kokoro"
+  # bewusst beibehalten, damit TTS_BASE_URL unverändert bleibt.
   kokoro:
-    image: ghcr.io/remsky/kokoro-fastapi-cpu:v0.2.4
+    image: ghcr.io/matatonic/openedai-speech:0.18.2
     restart: unless-stopped
+    environment:
+      - TTS_HOME=/app/voices
+      - HF_HOME=/app/huggingface
     volumes:
-      - kokoro_models:/app/models
+      - kokoro_models:/app/voices
 
   backend:
     env_file:
