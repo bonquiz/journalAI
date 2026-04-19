@@ -1,0 +1,24 @@
+# Secrets raus (default-deny). .example-Dateien bleiben erlaubt.
+- .env
+- .env.*
++ .env.example
++ .env.*.example
+
+# Build-Artefakte, VCS, Caches, lokale Daten
+- .git/
+- .github/workflows/*.yml.local
+- .venv/
+- backend/.venv/
+- node_modules/
+- frontend/build/
+- frontend/.svelte-kit/
+- frontend/test-results/
+- frontend/playwright-report/
+- deploy/data/
+- deploy/caddy_data/
+- deploy/caddy_config/
+- __pycache__/
+- *.pyc
+- .pytest_cache/
+- credentials.txt
+- .DS_Store

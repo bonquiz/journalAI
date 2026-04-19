@@ -3,6 +3,7 @@
 .env.*
 !.env.example
 !.env.local-llm.example
+!.env.hetzner.example
 data/
 *.db
 *.db-wal
