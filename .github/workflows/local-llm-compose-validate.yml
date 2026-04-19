@@ -1,0 +1,36 @@
+name: local-llm compose validate
+on:
+  pull_request:
+    paths:
+      - "deploy/docker-compose.local-llm*.yml"
+      - "deploy/.env.local-llm.example"
+      - ".github/workflows/local-llm-compose-validate.yml"
+  push:
+    branches: [main]
+    paths:
+      - "deploy/docker-compose.local-llm*.yml"
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Prepare env files
+        run: |
+          cp deploy/.env.example deploy/.env
+          cp deploy/.env.local-llm.example deploy/.env.local-llm
+      - name: Validate base overlay
+        run: |
+          docker compose \
+            -f deploy/docker-compose.yml \
+            -f deploy/docker-compose.local-llm.yml \
+            --env-file deploy/.env --env-file deploy/.env.local-llm \
+            config > /dev/null
+      - name: Validate GPU overlay
+        run: |
+          docker compose \
+            -f deploy/docker-compose.yml \
+            -f deploy/docker-compose.local-llm.yml \
+            -f deploy/docker-compose.local-llm.gpu.yml \
+            --env-file deploy/.env --env-file deploy/.env.local-llm \
+            config > /dev/null
