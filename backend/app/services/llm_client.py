@@ -68,6 +68,31 @@ def resolved_model(cap: Capability) -> str | None:
     return model
 
 
+def resolved_base_url(cap: Capability) -> str | None:
+    """Resolve base_url for a capability. Chain: DB → ENV."""
+    if cap not in _DEFAULTS:
+        raise ValueError(f"unknown capability: {cap}")
+    db_url, _, _ = _db_override(cap)
+    d_url, _, _ = _DEFAULTS[cap]
+    return db_url or d_url or None
+
+
+def resolved_api_key(cap: Capability) -> str:
+    """Resolve api_key for a capability. Chain: DB → ENV → OPENAI_API_KEY
+    (only when base_url points at api.openai.com) → 'unused'.
+    Mirrors the logic in `get_client`.
+    """
+    if cap not in _DEFAULTS:
+        raise ValueError(f"unknown capability: {cap}")
+    db_url, db_key, _ = _db_override(cap)
+    d_url, d_key, _ = _DEFAULTS[cap]
+    base_url = db_url or d_url
+    api_key = db_key or d_key
+    if not api_key and "api.openai.com" in (base_url or "") and env.openai_api_key:
+        api_key = env.openai_api_key
+    return api_key or "unused"
+
+
 def get_client(cap: Capability) -> tuple[OpenAI, str]:
     if cap not in _DEFAULTS:
         raise ValueError(f"unknown capability: {cap}")
