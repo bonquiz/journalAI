@@ -1,62 +1,64 @@
-# journalAI auf Hetzner Cloud (B-Pfad)
+# journalAI on Hetzner Cloud (Path B)
 
-Wenn du selbst keine geeignete Hardware hast, kannst du den lokalen LLM-Stack temporär auf einem Hetzner-Cloud-Server betreiben — stundenweise gemietet, danach wieder abgerissen.
+🇩🇪 [Deutsche Version](hetzner.de.md)
 
-## Voraussetzungen
+If you don't have suitable hardware of your own, you can run the local LLM stack on a temporary Hetzner Cloud server — rented by the hour, torn down when done.
 
-- Hetzner-Cloud-Account
-- `hcloud` CLI installiert (`brew install hcloud` / `apt install hcloud-cli` / von Hetzner-GitHub)
-- Ein SSH-Public-Key in HCloud hochgeladen (`hcloud ssh-key create --name julian-key --public-key-from-file ~/.ssh/id_ed25519.pub`)
-- API-Token (Read+Write) aus der HCloud-Console
+## Prerequisites
+
+- Hetzner Cloud account
+- `hcloud` CLI installed (`brew install hcloud` / `apt install hcloud-cli` / from Hetzner GitHub)
+- An SSH public key uploaded to HCloud (`hcloud ssh-key create --name my-key --public-key-from-file ~/.ssh/id_ed25519.pub`)
+- API token (Read+Write) from the HCloud console
 
 ## Setup
 
-1. Vorlage kopieren und füllen:
+1. Copy the template and fill it:
    ```bash
    cp deploy/.env.hetzner.example deploy/.env.hetzner
-   # HCLOUD_TOKEN + HCLOUD_SSH_KEY eintragen
+   # Set HCLOUD_TOKEN + HCLOUD_SSH_KEY
    ```
-2. `deploy/.env` und `deploy/.env.local-llm` lokal vorbereiten (siehe `docs/self-hosting/local-llm.md`).
+2. Prepare `deploy/.env` and `deploy/.env.local-llm` locally (see [`local-llm.md`](local-llm.md)).
 3. Bootstrap:
    ```bash
-   # Kurztest, CPU-only, ~0,04 €/h
+   # CPU-only short test, ~0.04 €/h
    ./scripts/hetzner/bootstrap.sh --tier minimal
    ```
-4. Das Skript gibt am Ende die URL aus (Form: `https://<ip>.sslip.io`). Der erste Login-Flow geht ganz normal über das UI.
-5. Abreißen:
+4. The script prints the URL at the end (form: `https://<ip>.sslip.io`). Log in via the UI with your app password.
+5. Tear down:
    ```bash
    ./scripts/hetzner/teardown.sh
    ```
 
-## Kosten (Stand 2026-04)
+## Costs (as of 2026-04)
 
-| Tier | Server-Typ | ~ Kosten/h | Typische Test-Laufzeit |
+| Tier | Server type | ~ Cost/h | Typical test runtime |
 |---|---|---|---|
-| Minimal | cpx42 | 0,04 € | 1-4 h |
+| Minimal | cpx42 | 0.04 € | 1–4 h |
 
-## GPU-Tier — nicht auf Hetzner Cloud verfügbar
+## GPU tier — not on Hetzner Cloud
 
-Stand April 2026 bietet **Hetzner Cloud** keine GPU-Instanzen an; die GEX-Serie ist ein Produkt des separaten **Hetzner Robot** (dedicated servers, eigene API, deutlich längere Laufzeit- und Bezahlzyklen, kein on-demand-stundenweiser Betrieb vergleichbar zu HCloud).
+As of April 2026, **Hetzner Cloud offers no GPU instances**. The GEX-series is a **Hetzner Robot** (dedicated-server) product — separate API, noticeably longer minimum billing cycles, no true on-demand hourly rentals like HCloud.
 
-Für den GPU-Testlauf ("Recommended Tier") empfehlen wir alternativ:
-- **Hetzner Robot** — dedicated server mit GPU, über Web-Konsole oder Robot-API bestellbar. Mindest-Mietzeit und Setup-Gebühren beachten.
-- **Paperspace / Lambda / RunPod / Vast.ai** — reine on-demand-GPU-Cloud-Provider, pay-per-hour, vergleichbarer Setup-Aufwand. Unser `docker-compose.local-llm.gpu.yml`-Overlay läuft dort out of the box, sofern `nvidia-container-toolkit` auf dem Host installiert ist.
+For the GPU test tier ("Recommended"), we suggest alternatives:
+- **Hetzner Robot** — dedicated GPU servers, ordered via web console or Robot API. Mind minimum rental periods and setup fees.
+- **Paperspace / Lambda / RunPod / Vast.ai** — pay-per-hour GPU cloud. Our `docker-compose.local-llm.gpu.yml` overlay runs as-is if `nvidia-container-toolkit` is installed on the host.
 
-Das `--tier recommended`-Flag des Bootstrap-Skripts bricht daher aktuell mit einer Fehlermeldung ab und verweist auf diesen Abschnitt.
+The bootstrap script's `--tier recommended` flag therefore currently errors out and points here.
 
-## Maximal abgeschottet (Tailscale)
+## Maximum lockdown (Tailscale)
 
-Die Default-Firewall öffnet Port 443 fürs offene Internet. Wer das nicht will, nimmt den öffentlichen Zugang auf den Server ganz vom Netz und erreicht ihn nur noch über Tailscale.
+The default firewall exposes port 443 to the public internet. If you don't want that, put Tailscale in front and close 443 entirely.
 
-**Wichtiger Hinweis zur Architektur:** Tailscale-Verkehr kommt **nicht** als Pakete mit Source-IP `100.64/10` an der HCloud-Firewall an — Tailscale tunnelt über WireGuard auf UDP 41641 und die Pakete erscheinen an `tailscale0` intern auf dem Server. Die HCloud-Firewall via `--source-ips 100.64.0.0/10` einschränken zu wollen funktioniert daher **nicht**. Stattdessen:
+**Important architecture note:** Tailscale traffic does **not** arrive at the HCloud firewall as packets with source IP `100.64/10`. Tailscale tunnels via WireGuard on UDP 41641 and the packets surface on `tailscale0` *inside* the server. Trying to restrict the HCloud firewall with `--source-ips 100.64.0.0/10` therefore **does not work**. Instead:
 
-1. Auf dem Server (via SSH):
+1. On the server (via SSH):
    ```bash
    curl -fsSL https://tailscale.com/install.sh | sh
    sudo tailscale up
    ```
-2. Lokal (Client) dasselbe: `tailscale up`.
-3. HCloud-Firewall: Port 443 komplett entfernen (nicht einschränken). Tailscale selbst braucht keine HCloud-Firewall-Regel — die WireGuard-Pakete kommen auf allen Ports durch NAT-Hole-Punching an.
+2. On your local machine: `tailscale up`.
+3. HCloud firewall: remove port 443 entirely (don't try to restrict by source). Tailscale needs no HCloud firewall rule — WireGuard punches through NAT on any port.
    ```bash
    hcloud firewall replace-rules journalai-test-fw --rules-file <(cat <<EOF
    [
@@ -65,18 +67,18 @@ Die Default-Firewall öffnet Port 443 fürs offene Internet. Wer das nicht will,
    EOF
    )
    ```
-4. Caddy-Binding auf das Tailscale-Interface beschränken, damit es nichts mehr auf der öffentlichen IP hört:
-   - Variante a (minimal): auf dem Server `docker compose restart caddy` entfällt — stattdessen Caddy-Container-Port-Mapping einschränken: in einer Override-Compose-Datei nur `tailscale0`-IP binden, z. B. `ports: ["100.x.y.z:443:443"]` (Tailscale-IP via `tailscale ip -4` ermitteln).
-   - Variante b: Auf Caddy-HTTPS verzichten und über Tailscale-MagicDNS auf den Backend-Container tunneln (`tailscale serve`).
-5. Zugriff dann nur noch über den Tailscale-Hostnamen/IP des Servers, z. B. `https://journalai-test.tail-xxxx.ts.net/` (MagicDNS aktiviert) oder `https://100.x.y.z/` mit selbst-signiertem Cert.
+4. Bind Caddy to the Tailscale interface only so it no longer listens on the public IP:
+   - Option A (minimal): in an override compose file, bind Caddy's port only to the Tailscale IP, e.g. `ports: ["100.x.y.z:443:443"]` (get the Tailscale IP via `tailscale ip -4`).
+   - Option B: drop Caddy's HTTPS and tunnel via Tailscale MagicDNS directly to the backend (`tailscale serve`).
+5. Access then only via the server's Tailscale hostname/IP, e.g. `https://journalai-test.tail-xxxx.ts.net/` (if MagicDNS enabled) or `https://100.x.y.z/` with a self-signed cert.
 
-Tailscale-Auth-Keys bleiben bewusst außerhalb von `.env.hetzner` (eigener Login-Flow per Browser oder `tailscale up --authkey`).
+Tailscale auth keys are deliberately kept out of `.env.hetzner` — they have their own login flow (browser-based or `tailscale up --authkey`).
 
-**Wenn nur SSH-Lockdown gewünscht ist** (ohne Tailscale-Gesamtlösung): einfacher `hcloud firewall replace-rules` wie oben, der nur Port 22 von der eigenen IP erlaubt — 80/443 werden komplett geschlossen, Server ist dann nur noch über SSH-Portforward erreichbar (`ssh -L 8443:localhost:443 root@<ip>`).
+**If you just want SSH lockdown** (without a full Tailscale setup): a simpler `hcloud firewall replace-rules` that only allows port 22 from your IP — ports 80/443 closed entirely, server reachable only via SSH port-forward (`ssh -L 8443:localhost:443 root@<ip>`).
 
-## Wechselnde Client-IP
+## Changing client IP
 
-`bootstrap.sh` öffnet SSH nur von deiner aktuellen öffentlichen IP. Wenn du VPN umschaltest oder in ein anderes Netz wechselst, musst du die Regel updaten:
+`bootstrap.sh` only opens SSH from your current public IP. If you switch VPN or networks, update the rule:
 
 ```bash
 MY_IP="$(curl -s ifconfig.me)/32"
