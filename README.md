@@ -63,16 +63,18 @@ immediately after transcription.
 
 ## Lokaler LLM-Stack (optional, privacy-first)
 
-journalAI läuft standardmäßig gegen OpenAI-kompatible Endpoints (jeder Provider). Für kompletten Lokal-Betrieb ohne Cloud existiert ein offizielles Compose-Profil mit Ollama (Chat + Embed), speaches (STT) und Kokoro-FastAPI (TTS).
+journalAI läuft standardmäßig gegen OpenAI-kompatible Endpoints (jeder Provider). Für kompletten Lokal-Betrieb ohne Cloud existiert ein offizielles Compose-Profil mit Ollama (Chat + Embed), speaches (STT) und openedai-speech/Piper (TTS — dt. Stimme via `thorsten`).
 
 - **Lokal auf eigener Hardware:** [`docs/self-hosting/local-llm.md`](docs/self-hosting/local-llm.md)
-- **Ohne geeignete Hardware → Hetzner Cloud:** [`docs/self-hosting/hetzner.md`](docs/self-hosting/hetzner.md)
+- **Ohne geeignete Hardware → Hetzner Cloud (CPU) oder RunPod (GPU):** [`docs/self-hosting/hetzner.md`](docs/self-hosting/hetzner.md)
 
-### Performance-Referenz
+### Performance-Referenz (gemessen 2026-04-19)
 
-| Tier | Chat (chars/s) | STT (RTF, lower=faster) | Embed (entries/s) | TTS (RTF, lower=faster) |
-|---|---|---|---|---|
-| Minimal (CPX42, CPU, Hetzner Cloud) | `TBD` | `TBD` | `TBD` | `TBD` |
-| Recommended (GPU, extern) | siehe [hetzner.md](docs/self-hosting/hetzner.md#gpu-tier--nicht-auf-hetzner-cloud-verfügbar) | | | |
+| Tier | Chat | STT (RTF) | Embed | TTS (RTF) | Kosten/h |
+|---|---|---|---|---|---|
+| Minimal (CPX42, CPU) — qwen2.5:3b | 94 chars/s (~15 tok/s) | 0.03 | 3.5/s (nomic) | 0.3 | ~0,04 € |
+| Recommended (RTX 4090, GPU) — qwen2.5:7b | 639 chars/s (**158 tok/s**) | — | — | — | ~0,34 $ |
 
-Detailreports: [`docs/benchmarks/`](docs/benchmarks/). Benchmarks stammen von einem realen Hetzner-Testlauf, nicht aus Herstellerangaben.
+Hinweis: Minimal-Tier ist brauchbar für Evaluation, aber Chat-Qualität mit qwen2.5:3b ist spürbar unter ChatGPT-Niveau (Grammatikfehler, Wortwiederholungen). **Für echten Betrieb wird GPU-Tier mit qwen2.5:14b oder größer empfohlen.**
+
+Detailreports: [`docs/benchmarks/`](docs/benchmarks/). Benchmarks stammen von realen Cloud-Testläufen (Hetzner Cloud + RunPod Community), nicht aus Herstellerangaben.
