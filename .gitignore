@@ -18,6 +18,7 @@ uploads/
 *.m4a
 *.ogg
 *.webm
+!tests/fixtures/*.webm
 
 # Python
 __pycache__/
