@@ -5,7 +5,7 @@
 
 services:
   ollama:
-    image: ollama/ollama:0.6.5
+    image: ollama/ollama:0.21.0
     restart: unless-stopped
     volumes:
       - ollama_models:/root/.ollama
@@ -16,7 +16,7 @@ services:
       retries: 10
 
   ollama-init:
-    image: ollama/ollama:0.6.5
+    image: ollama/ollama:0.21.0
     depends_on:
       ollama:
         condition: service_healthy
@@ -27,7 +27,7 @@ services:
        OLLAMA_HOST=http://ollama:11434 ollama pull ${EMBED_MODEL}"
 
   speaches:
-    image: ghcr.io/speaches-ai/speaches:0.8.2-cpu
+    image: ghcr.io/speaches-ai/speaches:0.8.3-cpu
     restart: unless-stopped
     volumes:
       - speaches_models:/home/ubuntu/.cache/huggingface
@@ -35,7 +35,7 @@ services:
       - WHISPER__MODEL=${STT_MODEL}
 
   kokoro:
-    image: ghcr.io/remsky/kokoro-fastapi-cpu:v0.3.0
+    image: ghcr.io/remsky/kokoro-fastapi-cpu:v0.2.4
     restart: unless-stopped
     volumes:
       - kokoro_models:/app/models

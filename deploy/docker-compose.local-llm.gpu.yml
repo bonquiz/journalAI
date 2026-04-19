@@ -15,7 +15,7 @@ services:
               capabilities: [gpu]
 
   speaches:
-    image: ghcr.io/speaches-ai/speaches:0.8.2-cuda
+    image: ghcr.io/speaches-ai/speaches:0.8.3-cuda
     deploy:
       resources:
         reservations:
@@ -25,7 +25,7 @@ services:
               capabilities: [gpu]
 
   kokoro:
-    image: ghcr.io/remsky/kokoro-fastapi-gpu:v0.3.0
+    image: ghcr.io/remsky/kokoro-fastapi-gpu:v0.2.4
     deploy:
       resources:
         reservations:
