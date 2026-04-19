@@ -1,12 +1,12 @@
 """Embedding vector operations for semantic search."""
 from __future__ import annotations
 
-import numpy as np
 import httpx
+import numpy as np
 from fastapi import HTTPException
 
-from app.services.llm_client import get_client
 from app.models.entry_embedding import EntryEmbedding
+from app.services.llm_client import get_client
 
 MAX_EMBED_CHARS = 28000  # ~7k tokens @ 4 chars/token heuristic
 

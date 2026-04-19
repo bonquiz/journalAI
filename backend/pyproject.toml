@@ -44,12 +44,32 @@ dev = [
 ]
 
 [tool.ruff]
-line-length = 100
+line-length = 120
 target-version = "py312"
+extend-exclude = ["alembic/versions"]
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "B", "UP", "S", "ASYNC"]
 ignore = ["S101"]  # pytest uses assert
+
+[tool.ruff.lint.per-file-ignores]
+# Tests: allow broad pytest.raises, hardcoded test passwords, unused loop vars,
+# long strings in test fixtures, try/except/pass in teardown helpers, mid-file
+# imports for test-specific setup paths.
+"tests/**" = ["B017", "S105", "S106", "S110", "B007", "E501", "E402", "F821"]
+# Alembic env.py has unavoidable mid-file imports (config must be set up between
+# imports and the actual migration runner).
+"alembic/env.py" = ["E402", "I001"]
+# SQLAlchemy models use string-forward-references for relationship targets —
+# ruff doesn't resolve them (F821). The B008 in some routes/models is intentional
+# (Depends(...) pattern). import_.py splits parse-only imports from apply-imports
+# by design (E402).
+"app/models/*" = ["F821"]
+"app/services/import_.py" = ["E402"]
+"app/routes/*" = ["B008"]
+"app/services/tts.py" = ["B008", "S110"]
+"app/services/export.py" = ["E501"]
+"app/db.py" = ["E402", "S110"]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"

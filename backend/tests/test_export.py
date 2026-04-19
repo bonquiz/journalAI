@@ -117,6 +117,7 @@ def test_export_timestamps_have_z_suffix():
 
 
 from fastapi.testclient import TestClient
+
 from app.auth.sessions import create_session
 from app.main import app
 

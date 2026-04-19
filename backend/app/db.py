@@ -12,7 +12,6 @@ from sqlalchemy.orm import DeclarativeBase, sessionmaker
 
 from app.config import settings
 
-
 # pysqlcipher3's Connection.create_function() does not accept the `deterministic`
 # kwarg that modern SQLAlchemy (>=2.0) passes to register REGEXP/floor functions.
 # The Connection class is a C extension and can't be monkey-patched, so we patch

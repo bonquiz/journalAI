@@ -123,8 +123,8 @@ def test_embed_text_maps_connect_error_to_502():
 
 
 def test_save_and_load_embedding_vector():
-    from datetime import date
     import numpy as np
+
     from app.db import Base, SessionLocal, engine
     from app.models.entry import Entry
     from app.services.embeddings import (
@@ -151,8 +151,8 @@ def test_save_and_load_embedding_vector():
 
 
 def test_save_embedding_upserts_on_same_model():
-    from datetime import date
     import numpy as np
+
     from app.db import Base, SessionLocal, engine
     from app.models.entry import Entry
     from app.models.entry_embedding import EntryEmbedding
@@ -175,8 +175,8 @@ def test_save_embedding_upserts_on_same_model():
 
 
 def test_delete_embeddings_for_entry_removes_all_models():
-    from datetime import date
     import numpy as np
+
     from app.db import Base, SessionLocal, engine
     from app.models.entry import Entry
     from app.models.entry_embedding import EntryEmbedding

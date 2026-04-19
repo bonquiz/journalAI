@@ -42,6 +42,7 @@ def test_nonapi_path_bypasses_auth():
 
 def test_expired_session_returns_401():
     from datetime import datetime, timedelta
+
     from app.db import SessionLocal
     from app.models.session import AppSession
     sid = create_session()

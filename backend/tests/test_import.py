@@ -11,7 +11,8 @@ from app.models.entry_embedding import EntryEmbedding
 from app.models.settings import AppSettings
 from app.models.tag import EntryTag, Tag
 from app.services.embeddings import save_embedding_vector
-from app.services.import_ import ImportError as AppImportError, parse_export_zip
+from app.services.import_ import ImportError as AppImportError
+from app.services.import_ import parse_export_zip
 
 
 def setup_module():
@@ -101,7 +102,7 @@ def test_parse_rejects_corrupt_zip():
 
 
 from datetime import date
-from app.schemas.entries import new_id
+
 from app.services.import_ import ImportError as ImportError_
 from app.services.import_ import run_import
 
@@ -303,6 +304,7 @@ def test_run_import_reports_tag_counts_after_merge():
 
 
 from fastapi.testclient import TestClient
+
 from app.auth.sessions import create_session
 from app.main import app
 

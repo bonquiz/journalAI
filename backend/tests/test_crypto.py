@@ -1,5 +1,6 @@
 import pytest
-from app.crypto import wrap_secret, unwrap_secret
+
+from app.crypto import unwrap_secret, wrap_secret
 
 
 def test_roundtrip():

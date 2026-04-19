@@ -92,7 +92,6 @@ import numpy as _np
 from fastapi import HTTPException
 
 from app.models.entry import Entry
-from app.models.settings import AppSettings
 from app.services.embeddings import save_embedding_vector
 
 

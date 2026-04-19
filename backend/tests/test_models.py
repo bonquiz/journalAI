@@ -70,9 +70,10 @@ def test_entry_cascade_delete_tags():
 
 def test_entry_embedding_roundtrip():
     from datetime import date
+
+    from app.db import Base, SessionLocal, engine
     from app.models.entry import Entry
     from app.models.entry_embedding import EntryEmbedding
-    from app.db import Base, SessionLocal, engine
 
     engine.dispose()
     Base.metadata.create_all(engine)

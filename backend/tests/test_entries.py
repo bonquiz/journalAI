@@ -8,7 +8,6 @@ from app.models.entry import Entry
 from app.models.settings import AppSettings
 from app.models.tag import EntryTag, Tag
 
-
 HEADERS = {"x-csrf-token": "t"}
 def cookies(sid): return {"session": sid, "csrf": "t"}
 

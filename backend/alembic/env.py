@@ -1,10 +1,8 @@
 from logging.config import fileConfig
 
-from sqlalchemy import engine_from_config
-from sqlalchemy import pool
+from sqlalchemy import engine_from_config, pool
 
 from alembic import context
-
 from app.config import settings
 from app.db import Base
 
@@ -14,6 +12,7 @@ config = context.config
 
 # Build the SQLCipher URL from settings (overrides alembic.ini)
 from urllib.parse import quote as _q
+
 _key = _q(settings.db_encryption_key, safe="")
 config.set_main_option(
     "sqlalchemy.url",

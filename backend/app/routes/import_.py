@@ -7,10 +7,12 @@ from app.db import SessionLocal
 from app.security.rate_limit import limiter
 from app.services.embedding_jobs import request_backfill
 from app.services.import_ import (
-    ImportError as AppImportError,
     VALID_MODES,
     parse_export_zip,
     run_import,
+)
+from app.services.import_ import (
+    ImportError as AppImportError,
 )
 
 logger = logging.getLogger(__name__)

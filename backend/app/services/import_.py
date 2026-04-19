@@ -46,10 +46,12 @@ def parse_export_zip(blob: bytes) -> dict[str, Any]:
 
 
 from datetime import date as _date
+
 from sqlalchemy.orm import Session
 
 from app.models.entry import Entry as EntryModel
-from app.models.tag import EntryTag, Tag as TagModel
+from app.models.tag import EntryTag
+from app.models.tag import Tag as TagModel
 from app.schemas.entries import new_id as new_entry_id
 from app.services.embeddings import delete_embeddings_for_entry
 from app.utc import utc_now
