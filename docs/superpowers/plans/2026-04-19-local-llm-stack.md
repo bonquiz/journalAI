@@ -49,6 +49,8 @@
 
 - [ ] **Step 1: Failing-Test für `resolved_base_url` schreiben**
 
+Wir behalten die bestehende `_DEFAULTS`-Semantik (Snapshot zur Importzeit) unverändert bei. Bestehende Tests patchen via `monkeypatch.setitem(_DEFAULTS, cap, (url, key, model))` — das Pattern bleibt gültig. Neue Tests folgen demselben Muster.
+
 `backend/tests/test_llm_client_resolvers.py`:
 
 ```python
@@ -56,62 +58,49 @@
 
 Die Helper müssen exakt dieselbe Resolution-Chain wie `get_client` verwenden:
 DB-Setting → ENV → OpenAI-Default (nur für base_url = api.openai.com-Fälle).
-"""
-import pytest
 
+Wir patchen `_DEFAULTS[cap]` direkt (Snapshot-Semantik bleibt erhalten).
+"""
 from app.services import llm_client
 
 
-def setup_module(module):
-    # Saubere In-Memory-DB pro Modul; entry-embeddings-Tabelle wird in conftest
-    # initialisiert.
-    from app.db import Base, engine
-    Base.metadata.create_all(engine)
-
-
 def test_resolved_base_url_falls_back_to_env(monkeypatch):
-    # DB leer, ENV liefert Ollama-URL
-    monkeypatch.setattr(llm_client._DEFAULTS, "__getitem__",
-                        lambda key: ("http://ollama:11434/v1", "", "") if key == "chat"
-                        else llm_client._DEFAULTS.get(key))
+    # DB leer (db_override liefert None), ENV liefert Ollama-URL via _DEFAULTS-Patch
+    monkeypatch.setattr(llm_client, "_db_override", lambda cap: (None, None, None))
+    monkeypatch.setitem(llm_client._DEFAULTS, "chat",
+                        ("http://ollama:11434/v1", "", ""))
     assert llm_client.resolved_base_url("chat") == "http://ollama:11434/v1"
 
 
 def test_resolved_base_url_db_wins_over_env(monkeypatch):
-    # DB hat Override, ENV wird ignoriert
-    def fake_db_override(cap):
-        if cap == "chat":
-            return ("http://db-host/v1", None, None)
-        return (None, None, None)
-    monkeypatch.setattr(llm_client, "_db_override", fake_db_override)
+    monkeypatch.setattr(llm_client, "_db_override",
+                        lambda cap: ("http://db-host/v1", None, None) if cap == "chat"
+                        else (None, None, None))
+    monkeypatch.setitem(llm_client._DEFAULTS, "chat",
+                        ("http://env-host/v1", "", ""))
     assert llm_client.resolved_base_url("chat") == "http://db-host/v1"
 
 
 def test_resolved_api_key_returns_env_default(monkeypatch):
     monkeypatch.setattr(llm_client, "_db_override", lambda cap: (None, None, None))
-    # ENV setzt chat_api_key
-    import app.config
-    monkeypatch.setattr(app.config.settings, "chat_api_key", "env-key")
-    monkeypatch.setattr(app.config.settings, "chat_base_url", "http://ollama:11434/v1")
-    # Re-import triggers _DEFAULTS re-eval not needed; we call resolver directly
+    monkeypatch.setitem(llm_client._DEFAULTS, "chat",
+                        ("http://ollama:11434/v1", "env-key", ""))
     assert llm_client.resolved_api_key("chat") == "env-key"
 
 
 def test_resolved_api_key_openai_shared_fallback(monkeypatch):
     monkeypatch.setattr(llm_client, "_db_override", lambda cap: (None, None, None))
-    import app.config
-    monkeypatch.setattr(app.config.settings, "chat_api_key", "")
-    monkeypatch.setattr(app.config.settings, "chat_base_url", "https://api.openai.com/v1")
-    monkeypatch.setattr(app.config.settings, "openai_api_key", "sk-shared")
+    monkeypatch.setitem(llm_client._DEFAULTS, "chat",
+                        ("https://api.openai.com/v1", "", ""))
+    monkeypatch.setattr(llm_client.env, "openai_api_key", "sk-shared")
     assert llm_client.resolved_api_key("chat") == "sk-shared"
 
 
 def test_resolved_api_key_defaults_to_unused_for_local(monkeypatch):
     monkeypatch.setattr(llm_client, "_db_override", lambda cap: (None, None, None))
-    import app.config
-    monkeypatch.setattr(app.config.settings, "chat_api_key", "")
-    monkeypatch.setattr(app.config.settings, "chat_base_url", "http://ollama:11434/v1")
-    monkeypatch.setattr(app.config.settings, "openai_api_key", "")
+    monkeypatch.setitem(llm_client._DEFAULTS, "chat",
+                        ("http://ollama:11434/v1", "", ""))
+    monkeypatch.setattr(llm_client.env, "openai_api_key", "")
     assert llm_client.resolved_api_key("chat") == "unused"
 ```
 
@@ -123,7 +112,7 @@ Erwartet: `AttributeError: module 'app.services.llm_client' has no attribute 're
 
 - [ ] **Step 3: Resolver-Helper implementieren**
 
-In `backend/app/services/llm_client.py` direkt unter `resolved_model` ergänzen:
+In `backend/app/services/llm_client.py` direkt unter `resolved_model` ergänzen (kein Refactor an `_DEFAULTS`, keine Änderung an `get_client`):
 
 ```python
 def resolved_base_url(cap: Capability) -> str | None:
@@ -151,18 +140,7 @@ def resolved_api_key(cap: Capability) -> str:
     return api_key or "unused"
 ```
 
-Ausserdem `_DEFAULTS` ist als Modul-Konstante per `env.*`-Werte eingelesen; da pydantic-settings beim Test-Run frisch instanziiert wird, reichen `monkeypatch.setattr(app.config.settings, …)` nicht aus, um `_DEFAULTS` zu updaten. Daher in den Resolvern stattdessen **live** aus `env` lesen:
-
-```python
-def _env_defaults(cap: str) -> tuple[str, str, str]:
-    return (
-        getattr(env, f"{cap}_base_url"),
-        getattr(env, f"{cap}_api_key"),
-        getattr(env, f"{cap}_model"),
-    )
-```
-
-Und `_DEFAULTS`-Zugriffe in `resolved_base_url`, `resolved_api_key`, `resolved_model` und `get_client` durch `_env_defaults(cap)` ersetzen. So liest die Resolution-Chain konsistent die aktuellen ENV-Werte — wichtig für Monkeypatch-basierte Tests und spätere dynamische ENV-Änderungen.
+**Wichtig (Codex-Review-Fix):** Wir refactorieren `_DEFAULTS` bewusst **nicht** auf Live-Reads aus `env`. Die bestehende Snapshot-Semantik bleibt, weil andere Tests (`test_llm_client.py`, `test_search_service.py`, `test_search_routes.py`) per `monkeypatch.setitem(_DEFAULTS, cap, ...)` arbeiten. Die neuen Tests folgen demselben Pattern.
 
 - [ ] **Step 4: Tests laufen — grün**
 
@@ -476,7 +454,7 @@ git commit -m "feat(settings-ui): show 'aus ENV' hint when DB field is empty"
 # ----------------------------------------------------------------------------
 # Tier: Minimal (CPU-only). Realistisch für Evaluation, nicht für Dauerbetrieb.
 # Erwartete Performance (Messung im Hetzner-Testlauf, siehe docs/benchmarks/):
-#   Chat: ~3-8 tok/s • STT: ~1x realtime • Embed: ~20 entries/s • TTS: ~1x realtime
+#   Chat: ~15-40 chars/s • STT: ~1x realtime • Embed: ~20 entries/s • TTS: ~1x realtime
 # ----------------------------------------------------------------------------
 # CHAT_BASE_URL=http://ollama:11434/v1
 # CHAT_API_KEY=ollama
@@ -528,11 +506,10 @@ TTS_VOICE=af_sky
 
 services:
   ollama:
-    image: ollama/ollama:0.3.14
+    image: ollama/ollama:0.6.5
     restart: unless-stopped
     volumes:
       - ollama_models:/root/.ollama
-    networks: [journalai_net]
     healthcheck:
       test: ["CMD-SHELL", "ollama list >/dev/null 2>&1 || exit 1"]
       interval: 10s
@@ -540,7 +517,7 @@ services:
       retries: 10
 
   ollama-init:
-    image: ollama/ollama:0.3.14
+    image: ollama/ollama:0.6.5
     depends_on:
       ollama:
         condition: service_healthy
@@ -549,23 +526,20 @@ services:
     command: >-
       "OLLAMA_HOST=http://ollama:11434 ollama pull ${CHAT_MODEL} &&
        OLLAMA_HOST=http://ollama:11434 ollama pull ${EMBED_MODEL}"
-    networks: [journalai_net]
 
   speaches:
-    image: ghcr.io/speaches-ai/speaches:latest-cpu
+    image: ghcr.io/speaches-ai/speaches:0.8.2-cpu
     restart: unless-stopped
     volumes:
       - speaches_models:/home/ubuntu/.cache/huggingface
-    networks: [journalai_net]
     environment:
       - WHISPER__MODEL=${STT_MODEL}
 
   kokoro:
-    image: ghcr.io/remsky/kokoro-fastapi-cpu:latest
+    image: ghcr.io/remsky/kokoro-fastapi-cpu:v0.3.0
     restart: unless-stopped
     volumes:
       - kokoro_models:/app/models
-    networks: [journalai_net]
 
   backend:
     env_file:
@@ -581,7 +555,7 @@ volumes:
   kokoro_models:
 ```
 
-Hinweis: Das Image-Tag `ollama/ollama:0.3.14` wird gepinnt; neuere Versionen sollten erst nach Re-Benchmark übernommen werden. Bei Erscheinen des Plans aktuelle stabile Version verifizieren und bei Bedarf updaten.
+**Codex-Review-Fix:** Alle drei Images sind versioniert gepinnt (keine `latest`-Tags). Die angegebenen Versionen sind Orientierungs-Pins — vor dem ersten Commit dieses Files **verifizieren**, dass diese Tags aktuell auf Docker Hub / GHCR verfügbar sind (`docker manifest inspect <image>:<tag>`) und ggf. auf die zum Zeitpunkt der Implementierung neueste stabile Version anheben. Die `networks`-Direktive wurde bewusst weggelassen — Compose nutzt das implizite Projekt-Default-Netzwerk (`journalai_default`), dem das Backend aus `docker-compose.yml` bereits angehört.
 
 - [ ] **Step 3: YAML-Validität prüfen**
 
@@ -627,7 +601,7 @@ services:
               capabilities: [gpu]
 
   speaches:
-    image: ghcr.io/speaches-ai/speaches:latest-cuda
+    image: ghcr.io/speaches-ai/speaches:0.8.2-cuda
     deploy:
       resources:
         reservations:
@@ -637,7 +611,7 @@ services:
               capabilities: [gpu]
 
   kokoro:
-    image: ghcr.io/remsky/kokoro-fastapi-gpu:latest
+    image: ghcr.io/remsky/kokoro-fastapi-gpu:v0.3.0
     deploy:
       resources:
         reservations:
@@ -740,6 +714,7 @@ git commit -m "ci: validate local-llm compose overlays on PR"
 
 **Files:**
 - Create: `scripts/hetzner/bootstrap.sh`
+- Create: `scripts/hetzner/rsync-include.txt`
 - Create: `deploy/.env.hetzner.example`
 
 - [ ] **Step 1: `.env.hetzner.example` schreiben**
@@ -762,6 +737,41 @@ HCLOUD_SERVER_NAME=journalai-test
 DOMAIN=
 ```
 
+- [ ] **Step 1.5: `rsync-include.txt` schreiben**
+
+Ein strenger Filter, der **standardmäßig alle `.env*`-Dateien ausschließt** und nur die .example-Varianten erlaubt. `.env` und `.env.local-llm` werden danach per `scp` explizit übertragen (getrennt, nachvollziehbar).
+
+`scripts/hetzner/rsync-include.txt`:
+
+```
+# Secrets raus (default-deny). .example-Dateien bleiben erlaubt.
+- .env
+- .env.*
++ .env.example
++ .env.*.example
+
+# Build-Artefakte, VCS, Caches, lokale Daten
+- .git/
+- .github/workflows/*.yml.local
+- .venv/
+- backend/.venv/
+- node_modules/
+- frontend/build/
+- frontend/.svelte-kit/
+- frontend/test-results/
+- frontend/playwright-report/
+- deploy/data/
+- deploy/caddy_data/
+- deploy/caddy_config/
+- __pycache__/
+- *.pyc
+- .pytest_cache/
+- credentials.txt
+- .DS_Store
+```
+
+Reihenfolge ist wichtig: die `+`-Regeln müssen vor den `-`-Regeln stehen, die sie aufweichen (in rsync-filter-Syntax wird das erste matchende Pattern verwendet).
+
 - [ ] **Step 2: Bootstrap-Skript schreiben**
 
 `scripts/hetzner/bootstrap.sh`:
@@ -774,10 +784,12 @@ set -euo pipefail
 
 TIER="minimal"
 YES="false"
+SSH_SOURCE_OVERRIDE=""
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --tier) TIER="$2"; shift 2 ;;
     --yes) YES="true"; shift ;;
+    --ssh-source-ip) SSH_SOURCE_OVERRIDE="$2"; shift 2 ;;
     *) echo "Unbekanntes Argument: $1" >&2; exit 2 ;;
   esac
 done
@@ -820,16 +832,22 @@ if [[ "$YES" != "true" ]]; then
   [[ "$ans" =~ ^[yY]$ ]] || { echo "Abbruch."; exit 0; }
 fi
 
-PUBLIC_IP="$(curl -sf https://ipv4.icanhazip.com || curl -sf https://ifconfig.me)"
-[[ -n "$PUBLIC_IP" ]] || { echo "Konnte lokale IP nicht ermitteln" >&2; exit 1; }
+if [[ -n "$SSH_SOURCE_OVERRIDE" ]]; then
+  SSH_SOURCE="$SSH_SOURCE_OVERRIDE"
+else
+  PUBLIC_IP="$(curl -sf https://ipv4.icanhazip.com || curl -sf https://api.ipify.org || curl -sf https://ifconfig.me)"
+  [[ -n "$PUBLIC_IP" ]] || {
+    echo "Konnte öffentliche IP nicht ermitteln. Nutze --ssh-source-ip <CIDR>." >&2; exit 1; }
+  SSH_SOURCE="${PUBLIC_IP}/32"
+fi
 
 FW_NAME="${HCLOUD_SERVER_NAME}-fw"
 if ! hcloud firewall describe "$FW_NAME" >/dev/null 2>&1; then
-  echo ">> Firewall $FW_NAME anlegen"
+  echo ">> Firewall $FW_NAME anlegen (SSH nur von $SSH_SOURCE)"
   hcloud firewall create --name "$FW_NAME" >/dev/null
-  hcloud firewall add-rule "$FW_NAME" --direction in --protocol tcp --port 22  --source-ips "${PUBLIC_IP}/32"
-  hcloud firewall add-rule "$FW_NAME" --direction in --protocol tcp --port 80  --source-ips "0.0.0.0/0" --source-ips "::/0"
-  hcloud firewall add-rule "$FW_NAME" --direction in --protocol tcp --port 443 --source-ips "0.0.0.0/0" --source-ips "::/0"
+  hcloud firewall add-rule "$FW_NAME" --direction in --protocol tcp --port 22  --source-ips "$SSH_SOURCE"
+  hcloud firewall add-rule "$FW_NAME" --direction in --protocol tcp --port 80  --source-ips "0.0.0.0/0,::/0"
+  hcloud firewall add-rule "$FW_NAME" --direction in --protocol tcp --port 443 --source-ips "0.0.0.0/0,::/0"
 fi
 
 # Cloud-init schreiben.
@@ -885,16 +903,17 @@ for i in {1..60}; do
   sleep 5
 done
 
-echo ">> Code übertragen (rsync)"
-rsync -az --delete \
-  --exclude='.git' \
-  --exclude='node_modules' \
-  --exclude='backend/.venv' \
-  --exclude='frontend/build' \
-  --exclude='frontend/.svelte-kit' \
-  --exclude='deploy/data' \
+echo ">> Code übertragen (rsync mit striktem Filter)"
+rsync -az --delete --delete-excluded \
+  --filter="merge $REPO_ROOT/scripts/hetzner/rsync-include.txt" \
   -e "ssh -o StrictHostKeyChecking=no" \
   "$REPO_ROOT/" "root@$SERVER_IP:/root/journalAI/"
+
+echo ">> .env-Dateien explizit übertragen (nicht im Default-Filter)"
+scp -o StrictHostKeyChecking=no \
+  "$REPO_ROOT/deploy/.env" \
+  "$REPO_ROOT/deploy/.env.local-llm" \
+  "root@$SERVER_IP:/root/journalAI/deploy/"
 
 echo ">> DOMAIN in deploy/.env setzen"
 ssh -o StrictHostKeyChecking=no "root@$SERVER_IP" \
@@ -942,8 +961,8 @@ Erwartet: Keine Errors (Warnungen OK, aber dokumentieren falls gravierend).
 - [ ] **Step 4: Commit**
 
 ```bash
-git add scripts/hetzner/bootstrap.sh deploy/.env.hetzner.example
-git commit -m "feat(hetzner): bootstrap script to spin up journalAI test server"
+git add scripts/hetzner/bootstrap.sh scripts/hetzner/rsync-include.txt deploy/.env.hetzner.example
+git commit -m "feat(hetzner): bootstrap script (rsync with strict filter) for journalAI test server"
 ```
 
 ---
@@ -1094,25 +1113,29 @@ done
 
 REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 BENCH_ENV="$REPO_ROOT/deploy/.env.benchmark"
-[[ -f "$BENCH_ENV" ]] || { echo "deploy/.env.benchmark fehlt — enthält BENCHMARK_USER/BENCHMARK_PASSWORD" >&2; exit 2; }
+[[ -f "$BENCH_ENV" ]] || { echo "deploy/.env.benchmark fehlt — enthält APP_PASSWORD" >&2; exit 2; }
 set -a; source "$BENCH_ENV"; set +a
-: "${BENCHMARK_USER:?}"; : "${BENCHMARK_PASSWORD:?}"
+: "${APP_PASSWORD:?APP_PASSWORD fehlt}"
 
 command -v jq       >/dev/null || { echo "jq fehlt" >&2; exit 2; }
 command -v curl     >/dev/null || { echo "curl fehlt" >&2; exit 2; }
 command -v python3  >/dev/null || { echo "python3 fehlt" >&2; exit 2; }
+command -v ffprobe  >/dev/null || { echo "ffprobe fehlt (ffmpeg paket)" >&2; exit 2; }
 
 COOKIE="$(mktemp)"; trap 'rm -f "$COOKIE"' EXIT
 
-# Login + CSRF holen
-curl -ksf -c "$COOKIE" "$URL/api/auth/csrf" >/dev/null
-CSRF="$(grep csrf_token "$COOKIE" | awk '{print $7}')"
-curl -ksf -b "$COOKIE" -c "$COOKIE" -X POST "$URL/api/auth/login" \
-  -H "X-CSRF-Token: $CSRF" -H "Content-Type: application/json" \
-  -d "{\"username\":\"$BENCHMARK_USER\",\"password\":\"$BENCHMARK_PASSWORD\"}" >/dev/null
-CSRF="$(grep csrf_token "$COOKIE" | awk '{print $7}')"
+# journalAI hat keinen separaten /csrf-Endpoint und keinen Username —
+# Login nimmt nur {"password": ...} und setzt Session + CSRF-Cookie im Response.
+curl -ksf -c "$COOKIE" -b "$COOKIE" -X POST "$URL/api/auth/login" \
+  -H "Content-Type: application/json" \
+  -d "{\"password\":\"$APP_PASSWORD\"}" >/dev/null
+CSRF="$(awk '$6 ~ /^csrf/ { print $7 }' "$COOKIE")"
+[[ -n "$CSRF" ]] || { echo "CSRF-Cookie nicht gefunden — Login fehlgeschlagen?" >&2; exit 1; }
 
 # --- Chat-Benchmark -----------------------------------------------------------
+# Die SSE-Events des Backends haben die Form `data: "<token>"\n\n` (JSON-encoded
+# String pro Token) + `data: [DONE]` als Sentinel. Siehe backend/app/routes/chat.py.
+# Wir messen chars/s (ehrliche, provider-neutrale Metrik) statt tokens/s.
 echo ">> Chat"
 CHAT_PROMPT="Schreibe einen 500 Wörter langen, zusammenhängenden deutschen Text über die Bedeutung von Datenschutz im Alltag."
 CHAT_START="$(date +%s.%N)"
@@ -1123,10 +1146,13 @@ CHAT_RESPONSE="$(curl -ksf -b "$COOKIE" -c "$COOKIE" \
   --no-buffer | tr -d '\r')"
 CHAT_END="$(date +%s.%N)"
 CHAT_ELAPSED="$(python3 -c "print($CHAT_END - $CHAT_START)")"
-# Tokens = ungefähr Wörter in der Response (ausreichend genau für Tier-Vergleiche).
-CHAT_TEXT="$(echo "$CHAT_RESPONSE" | grep '^data: ' | sed 's/^data: //' | jq -rs 'map(.delta // empty) | join("")')"
-CHAT_TOKENS="$(echo "$CHAT_TEXT" | wc -w)"
-CHAT_TPS="$(python3 -c "print(round($CHAT_TOKENS / $CHAT_ELAPSED, 2))")"
+CHAT_TEXT="$(echo "$CHAT_RESPONSE" \
+  | grep '^data: ' \
+  | sed 's/^data: //' \
+  | grep -v '^\[DONE\]$' \
+  | jq -Rs 'split("\n") | map(select(length > 0) | fromjson) | join("")')"
+CHAT_CHARS="$(printf '%s' "$CHAT_TEXT" | wc -c | awk '{print $1}')"
+CHAT_CPS="$(python3 -c "print(round($CHAT_CHARS / $CHAT_ELAPSED, 2))")"
 
 # --- STT-Benchmark ------------------------------------------------------------
 echo ">> STT"
@@ -1192,7 +1218,7 @@ REPORT="$REPO_ROOT/docs/benchmarks/${DATE}-${TIER}-${LABEL_SAFE}.md"
   echo "tier: $TIER"
   echo "label: $LABEL_SAFE"
   echo "url: $URL"
-  echo "chat_tokens_per_second: $CHAT_TPS"
+  echo "chat_chars_per_second: $CHAT_CPS"
   echo "stt_rtf: $STT_RTF"
   echo "embed_entries_per_second: $EMBED_EPS"
   echo "tts_rtf: $TTS_RTF"
@@ -1202,10 +1228,10 @@ REPORT="$REPO_ROOT/docs/benchmarks/${DATE}-${TIER}-${LABEL_SAFE}.md"
   echo ""
   echo "| Metric | Value |"
   echo "|---|---|"
-  echo "| Chat (tok/s) | $CHAT_TPS |"
-  echo "| STT (RTF) | $STT_RTF |"
+  echo "| Chat (chars/s) | $CHAT_CPS |"
+  echo "| STT (RTF, lower=faster) | $STT_RTF |"
   echo "| Embed (entries/s) | $EMBED_EPS |"
-  echo "| TTS (RTF) | $TTS_RTF |"
+  echo "| TTS (RTF, lower=faster) | $TTS_RTF |"
 } > "$REPORT"
 
 echo ""
@@ -1347,22 +1373,33 @@ Wenn du selbst keine geeignete Hardware hast, kannst du den lokalen LLM-Stack te
 
 ## Maximal abgeschottet (Tailscale)
 
-Die Default-Firewall öffnet Port 443 fürs offene Internet. Wer das nicht will, schaltet Tailscale dazwischen:
+Die Default-Firewall öffnet Port 443 fürs offene Internet. Wer das nicht will, nimmt den öffentlichen Zugang auf den Server ganz vom Netz und erreicht ihn nur noch über Tailscale.
 
-1. Auf dem Server via SSH:
+**Wichtiger Hinweis zur Architektur:** Tailscale-Verkehr kommt **nicht** als Pakete mit Source-IP `100.64/10` an der HCloud-Firewall an — Tailscale tunnelt über WireGuard auf UDP 41641 und die Pakete erscheinen an `tailscale0` intern auf dem Server. Die HCloud-Firewall via `--source-ips 100.64.0.0/10` einschränken zu wollen funktioniert daher **nicht**. Stattdessen:
+
+1. Auf dem Server (via SSH):
    ```bash
    curl -fsSL https://tailscale.com/install.sh | sh
    sudo tailscale up
    ```
-2. Lokal (Client) dasselbe: `sudo tailscale up`.
-3. HCloud-Firewall anpassen — Port 443 nur noch aus Tailscale-CGNAT-Range erlauben:
+2. Lokal (Client) dasselbe: `tailscale up`.
+3. HCloud-Firewall: Port 443 komplett entfernen (nicht einschränken). Tailscale selbst braucht keine HCloud-Firewall-Regel — die WireGuard-Pakete kommen auf allen Ports durch NAT-Hole-Punching an.
    ```bash
-   hcloud firewall delete-rule journalai-test-fw --direction in --port 443 --protocol tcp --source-ips 0.0.0.0/0 --source-ips ::/0
-   hcloud firewall add-rule    journalai-test-fw --direction in --protocol tcp --port 443 --source-ips 100.64.0.0/10
+   hcloud firewall replace-rules journalai-test-fw --rules-file <(cat <<EOF
+   [
+     {"direction":"in","protocol":"tcp","port":"22","source_ips":["$(curl -s ifconfig.me)/32"]}
+   ]
+   EOF
+   )
    ```
-4. Zugriff dann nicht mehr über `<ip>.sslip.io`, sondern über den Tailscale-Hostnamen des Servers (`http://journalai-test/` im Tailnet oder HTTPS mit eigener Cert-Konfiguration — Details siehe Caddy-Config).
+4. Caddy-Binding auf das Tailscale-Interface beschränken, damit es nichts mehr auf der öffentlichen IP hört:
+   - Variante a (minimal): auf dem Server `docker compose restart caddy` entfällt — stattdessen Caddy-Container-Port-Mapping einschränken: in einer Override-Compose-Datei nur `tailscale0`-IP binden, z. B. `ports: ["100.x.y.z:443:443"]` (Tailscale-IP via `tailscale ip -4` ermitteln).
+   - Variante b: Auf Caddy-HTTPS verzichten und über Tailscale-MagicDNS auf den Backend-Container tunneln (`tailscale serve`).
+5. Zugriff dann nur noch über den Tailscale-Hostnamen/IP des Servers, z. B. `https://journalai-test.tail-xxxx.ts.net/` (MagicDNS aktiviert) oder `https://100.x.y.z/` mit selbst-signiertem Cert.
 
-Tailscale-Auth-Keys werden bewusst nicht in `.env.hetzner` verwaltet, weil sie einen eigenen Login-Flow haben.
+Tailscale-Auth-Keys bleiben bewusst außerhalb von `.env.hetzner` (eigener Login-Flow per Browser oder `tailscale up --authkey`).
+
+**Wenn nur SSH-Lockdown gewünscht ist** (ohne Tailscale-Gesamtlösung): einfacher `hcloud firewall replace-rules` wie oben, der nur Port 22 von der eigenen IP erlaubt — 80/443 werden komplett geschlossen, Server ist dann nur noch über SSH-Portforward erreichbar (`ssh -L 8443:localhost:443 root@<ip>`).
 
 ## Wechselnde Client-IP
 
@@ -1409,7 +1446,7 @@ journalAI läuft standardmäßig gegen OpenAI-kompatible Endpoints (jeder Provid
 
 ### Performance-Referenz
 
-| Tier | Chat (tok/s) | STT (RTF) | Embed (entries/s) | TTS (RTF) |
+| Tier | Chat (chars/s) | STT (RTF, lower=faster) | Embed (entries/s) | TTS (RTF, lower=faster) |
 |---|---|---|---|---|
 | Minimal (CPX41, CPU) | `TBD` | `TBD` | `TBD` | `TBD` |
 | Recommended (GEX44, RTX 6000 Ada) | `TBD` | `TBD` | `TBD` | `TBD` |
@@ -1446,15 +1483,15 @@ Dem User folgende Info vorlegen und explizit „go" abwarten:
 
 URL merken (z. B. `https://1.2.3.4.sslip.io`). Warten bis Healthcheck PASS.
 
-- [ ] **Step 3: Admin-User im UI anlegen**
+- [ ] **Step 3: Einloggen**
 
-Erstes Onboarding via Browser (Registrierung, TOTP-Setup überspringen für Benchmark, wieder aktivieren vor Produktivnutzung).
+journalAI hat keine Registrierung; der einzige User wird beim Backend-Start aus `APP_PASSWORD` in `deploy/.env` gebootstrapped (siehe `backend/app/bootstrap.py`). Via Browser mit diesem Passwort einloggen. TOTP kann für den Benchmark-Durchlauf ungesetzt bleiben; für Produktivnutzung nach dem Benchmark-Durchlauf im UI aktivieren.
 
 - [ ] **Step 4: Benchmark laufen lassen**
 
 ```bash
-echo "BENCHMARK_USER=<user>"           > deploy/.env.benchmark
-echo "BENCHMARK_PASSWORD=<pw>"        >> deploy/.env.benchmark
+# Nutzt dasselbe Passwort wie das Backend (kein separater Benchmark-User).
+grep '^APP_PASSWORD=' deploy/.env > deploy/.env.benchmark
 ./scripts/benchmark.sh --url https://<ip>.sslip.io --tier minimal --label cpx41
 ```
 
@@ -1513,3 +1550,21 @@ Nach Abschluss in `memory/roadmap.md` im „Erledigt"-Abschnitt einen Eintrag er
 **Type consistency:** Resolver heißen durchgängig `resolved_base_url`, `resolved_api_key`, `resolved_model`. SettingsOut-Felder: `<cap>_resolved_base_url`, `<cap>_resolved_model`. Frontend-Helper: `envHint(dbValue, resolved)`. Konsistent.
 
 Keine offenen Gaps.
+
+## Codex-Review-Integration (2026-04-19)
+
+Dieser Plan wurde nach dem initialen Entwurf von Codex (`codex exec`, Round 1) review-geprüft. Alle 5 BLOCKER und 6 von 6 WICHTIG-Findings wurden integriert:
+
+- **BLOCKER 1 (Auth-Flow):** Task 10 Benchmark-Login nutzt jetzt den echten `{"password":...}`-Flow und liest das im Login-Response gesetzte `csrf`-Cookie direkt.
+- **BLOCKER 2 (SSE-Format):** Task 10 SSE-Parser kennt das tatsächliche Format (`data: "<token>"` JSON-encoded, `[DONE]` Sentinel).
+- **BLOCKER 3 (Kein Signup):** Task 14 Step 3 nutzt `APP_PASSWORD` statt fiktiver Registrierung.
+- **BLOCKER 4 (rsync-Secrets):** Task 7 nutzt strengen `rsync-include.txt`-Filter (default-deny für `.env*`) + explizites `scp` der zwei erlaubten Env-Dateien.
+- **BLOCKER 5 (`journalai_net`):** Task 4/5 Compose-Overlays lassen `networks:` weg und nutzen das Projekt-Default-Netz (das Backend bereits kennt).
+- **WICHTIG 6 (_DEFAULTS-Refactor):** Task 1 belässt `_DEFAULTS` als Snapshot; Tests patchen via `setitem` wie bestehende Tests.
+- **WICHTIG 7 (Image-Pinning):** Alle drei Images gepinnt (Ollama 0.6.5, speaches 0.8.2, kokoro v0.3.0); Verifizier-Hinweis vor Commit.
+- **WICHTIG 8 (Firewall-Syntax):** `--source-ips "0.0.0.0/0,::/0"` als Komma-joined-String.
+- **WICHTIG 9 (Public-IP-Override):** `--ssh-source-ip <CIDR>` als Option ergänzt; dreifach-Auto-Detect als Fallback.
+- **WICHTIG 10 (Metrik-Name):** `chars_per_second` statt `tokens_per_second` — ehrlich, tokenizer-unabhängig.
+- **WICHTIG 11 (Tailscale):** Komplett umgeschrieben — kein Firewall-Source-IP-Trick, stattdessen 443 schließen + Caddy an Tailscale-Interface binden.
+
+NICE-Finding 12 (API-Versionierung) übersprungen: journalAI hat keine externen API-Clients mit strikter Schema-Validierung; additive `resolved_*`-Felder sind unkritisch.
