@@ -60,3 +60,19 @@ gated Specs ohne `E2E_LIVE` aus.
 No journal data, audio, or secrets are ever committed to this repository.
 Your data lives in the `./data/` Docker volume. Audio files are discarded
 immediately after transcription.
+
+## Lokaler LLM-Stack (optional, privacy-first)
+
+journalAI läuft standardmäßig gegen OpenAI-kompatible Endpoints (jeder Provider). Für kompletten Lokal-Betrieb ohne Cloud existiert ein offizielles Compose-Profil mit Ollama (Chat + Embed), speaches (STT) und Kokoro-FastAPI (TTS).
+
+- **Lokal auf eigener Hardware:** [`docs/self-hosting/local-llm.md`](docs/self-hosting/local-llm.md)
+- **Ohne geeignete Hardware → Hetzner Cloud:** [`docs/self-hosting/hetzner.md`](docs/self-hosting/hetzner.md)
+
+### Performance-Referenz
+
+| Tier | Chat (chars/s) | STT (RTF, lower=faster) | Embed (entries/s) | TTS (RTF, lower=faster) |
+|---|---|---|---|---|
+| Minimal (CPX41, CPU) | `TBD` | `TBD` | `TBD` | `TBD` |
+| Recommended (GEX44, RTX 6000 Ada) | `TBD` | `TBD` | `TBD` | `TBD` |
+
+Detailreports: [`docs/benchmarks/`](docs/benchmarks/). Benchmarks stammen von einem realen Hetzner-Testlauf, nicht aus Herstellerangaben.
