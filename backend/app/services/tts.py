@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import re
 
+from app.config import settings as env
 from app.db import SessionLocal
 from app.models.settings import AppSettings
 from app.services.llm_client import get_client
@@ -31,7 +32,7 @@ _DEFAULT_SPEED = 1.0
 
 
 def _resolved_voice_and_speed(voice: str | None, speed: float | None) -> tuple[str, float]:
-    """Resolve voice/speed from call-params -> DB -> hardcoded default."""
+    """Resolve voice/speed. Chain: call-param -> DB -> ENV (TTS_VOICE / TTS_SPEED) -> hardcoded default."""
     if voice is None or speed is None:
         with SessionLocal() as db:
             s = db.get(AppSettings, 1)
@@ -40,9 +41,13 @@ def _resolved_voice_and_speed(voice: str | None, speed: float | None) -> tuple[s
     else:
         db_voice = None
         db_speed = None
+    env_voice = getattr(env, "tts_voice", "") or None
+    env_speed = getattr(env, "tts_speed", None)
     return (
-        voice or db_voice or _DEFAULT_VOICE,
-        speed if speed is not None else (db_speed if db_speed is not None else _DEFAULT_SPEED),
+        voice or db_voice or env_voice or _DEFAULT_VOICE,
+        speed if speed is not None
+        else (db_speed if db_speed is not None
+              else (env_speed if env_speed is not None else _DEFAULT_SPEED)),
     )
 
 

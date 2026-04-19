@@ -2,6 +2,8 @@
 .env
 .env.*
 !.env.example
+!.env.local-llm.example
+!.env.hetzner.example
 data/
 *.db
 *.db-wal
@@ -16,6 +18,7 @@ uploads/
 *.m4a
 *.ogg
 *.webm
+!tests/fixtures/*.webm
 
 # Python
 __pycache__/

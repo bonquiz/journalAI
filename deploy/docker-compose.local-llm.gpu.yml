@@ -1,0 +1,35 @@
+# Overlay: GPU-Variante des lokalen LLM-Stacks.
+# Nutzung: docker compose -f docker-compose.yml -f docker-compose.local-llm.yml \
+#           -f docker-compose.local-llm.gpu.yml \
+#           --env-file .env --env-file .env.local-llm up -d
+# Voraussetzungen auf dem Host: NVIDIA-Treiber + nvidia-container-toolkit.
+
+services:
+  ollama:
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+
+  speaches:
+    image: ghcr.io/speaches-ai/speaches:0.8.3-cuda
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+
+  kokoro:
+    image: ghcr.io/remsky/kokoro-fastapi-gpu:v0.2.4
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
