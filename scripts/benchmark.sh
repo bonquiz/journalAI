@@ -85,13 +85,18 @@ done
 
 EMBED_START="$(date +%s.%N)"
 curl -ksf -b "$COOKIE" -c "$COOKIE" -H "X-CSRF-Token: $CSRF" -X POST "$URL/api/search/reindex" >/dev/null
-while true; do
+# Das Status-Schema: {total, embedded, pending, current_model, configured, indexing:bool}
+# Kein "status"-String — wir pollen bis indexing=false. Pending > 0 nach Ende
+# heißt einzelne Embeds sind gescheitert (wird im Report erwähnt).
+sleep 2  # kurz warten, damit indexing=true sichtbar wird
+for _ in $(seq 1 300); do
   STATUS_JSON="$(curl -ksf -b "$COOKIE" "$URL/api/search/status")"
-  STATE="$(echo "$STATUS_JSON" | jq -r '.status')"
-  if [[ "$STATE" == "ready" || "$STATE" == "done" || "$STATE" == "error" ]]; then break; fi
+  INDEXING="$(echo "$STATUS_JSON" | jq -r '.indexing')"
+  [[ "$INDEXING" == "false" ]] && break
   sleep 2
 done
 EMBED_END="$(date +%s.%N)"
+EMBED_PENDING="$(echo "$STATUS_JSON" | jq -r '.pending')"
 EMBED_ELAPSED="$(python3 -c "print($EMBED_END - $EMBED_START)")"
 EMBED_EPS="$(python3 -c "print(round(100 / $EMBED_ELAPSED, 2))")"
 
@@ -140,6 +145,10 @@ REPORT="$REPO_ROOT/docs/benchmarks/${DATE}-${TIER}-${LABEL_SAFE}.md"
   echo "| STT (RTF, lower=faster) | $STT_RTF |"
   echo "| Embed (entries/s) | $EMBED_EPS |"
   echo "| TTS (RTF, lower=faster) | $TTS_RTF |"
+  if [[ "${EMBED_PENDING:-0}" != "0" && "${EMBED_PENDING:-0}" != "null" ]]; then
+    echo ""
+    echo "Hinweis: $EMBED_PENDING Embeddings blieben pending (Embed-Endpoint hat transient gescheitert — Metrik bezieht sich auf die 100 Entries, die durchliefen)."
+  fi
 } > "$REPORT"
 
 echo ""
