@@ -43,8 +43,12 @@ export HCLOUD_TOKEN  # hcloud CLI liest HCLOUD_TOKEN aus ENV
 
 # Server-Typ pro Tier.
 case "$TIER" in
-  minimal) SERVER_TYPE="cpx41" ;;         # 8 vCPU dedicated, 16 GB RAM, ~0,03 €/h
-  recommended) SERVER_TYPE="gex44" ;;     # RTX 6000 Ada, 48 GB VRAM, ~1,05 €/h
+  minimal) SERVER_TYPE="cpx42" ;;         # 8 vCPU shared, 16 GB RAM, ~0,04 €/h (cpx41-Nachfolger)
+  recommended)
+    echo "FEHLER: Hetzner Cloud bietet aktuell keine GPU-Instances an (Stand 2026-04)." >&2
+    echo "GPU-Tier erfordert Hetzner Robot (dedicated server) oder alternativen Provider." >&2
+    echo "Siehe docs/self-hosting/hetzner.md." >&2
+    exit 2 ;;
 esac
 
 echo ">> Ziel-Tier: $TIER ($SERVER_TYPE) in $HCLOUD_LOCATION"
@@ -161,5 +165,5 @@ echo "================ FERTIG ================"
 echo "URL:       https://$HOST"
 echo "SSH:       ssh root@$SERVER_IP"
 echo "Teardown:  scripts/hetzner/teardown.sh"
-echo "Kosten/h:  $( [[ $TIER == minimal ]] && echo '≈0,03 €' || echo '≈1,05 €' )"
+echo "Kosten/h:  ≈0,04 € (cpx42)"
 echo "========================================"
