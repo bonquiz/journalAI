@@ -58,27 +58,33 @@ CHAT_CHARS="$(printf '%s' "$CHAT_TEXT" | wc -c | awk '{print $1}')"
 CHAT_CPS="$(python3 -c "print(round($CHAT_CHARS / $CHAT_ELAPSED, 2))")"
 
 # --- STT-Benchmark ------------------------------------------------------------
+# Das Backend erwartet den Upload unter dem Feldnamen `file` (siehe
+# backend/app/routes/transcribe.py). CSRF-Cookie kann zwischen Requests
+# rotieren, deshalb neu einlesen.
+CSRF="$(awk '$6 ~ /^csrf/ { print $7 }' "$COOKIE")"
 echo ">> STT"
 STT_START="$(date +%s.%N)"
-curl -ksf -b "$COOKIE" -H "X-CSRF-Token: $CSRF" -X POST "$URL/api/transcribe" \
-  -F "audio=@$REPO_ROOT/tests/fixtures/benchmark-60s.webm" >/dev/null
+curl -ksf -b "$COOKIE" -c "$COOKIE" -H "X-CSRF-Token: $CSRF" -X POST "$URL/api/transcribe" \
+  -F "file=@$REPO_ROOT/tests/fixtures/benchmark-60s.webm" >/dev/null
 STT_END="$(date +%s.%N)"
 STT_ELAPSED="$(python3 -c "print($STT_END - $STT_START)")"
 STT_RTF="$(python3 -c "print(round($STT_ELAPSED / 60.0, 2))")"
 
 # --- Embed-Benchmark ----------------------------------------------------------
+CSRF="$(awk '$6 ~ /^csrf/ { print $7 }' "$COOKIE")"
 echo ">> Embed (100 Entries reindex)"
 CREATED_IDS=()
 for i in $(seq 1 100); do
-  EID="$(curl -ksf -b "$COOKIE" -H "X-CSRF-Token: $CSRF" -H "Content-Type: application/json" \
+  EID="$(curl -ksf -b "$COOKIE" -c "$COOKIE" -H "X-CSRF-Token: $CSRF" -H "Content-Type: application/json" \
     -X POST "$URL/api/entries" \
     -d "{\"entry_date\":\"2026-04-19\",\"title\":\"bench-$i\",\"content\":\"Test-Eintrag Nummer $i. Stichworte: Alltag, Datenschutz, Selbst-Reflexion.\"}" \
     | jq -r '.id')"
   CREATED_IDS+=("$EID")
+  CSRF="$(awk '$6 ~ /^csrf/ { print $7 }' "$COOKIE")"
 done
 
 EMBED_START="$(date +%s.%N)"
-curl -ksf -b "$COOKIE" -H "X-CSRF-Token: $CSRF" -X POST "$URL/api/search/reindex" >/dev/null
+curl -ksf -b "$COOKIE" -c "$COOKIE" -H "X-CSRF-Token: $CSRF" -X POST "$URL/api/search/reindex" >/dev/null
 while true; do
   STATUS_JSON="$(curl -ksf -b "$COOKIE" "$URL/api/search/status")"
   STATE="$(echo "$STATUS_JSON" | jq -r '.status')"
@@ -94,11 +100,12 @@ for eid in "${CREATED_IDS[@]}"; do
 done
 
 # --- TTS-Benchmark ------------------------------------------------------------
+CSRF="$(awk '$6 ~ /^csrf/ { print $7 }' "$COOKIE")"
 echo ">> TTS"
 TTS_TEXT="Dies ist ein Test-Text mit dreihundert Zeichen, um die Geschwindigkeit der lokalen Text-zu-Sprache-Engine zu vermessen. Wir testen sowohl CPU- als auch GPU-basierte Setups, um dir als Nutzer realistische Kennzahlen zu geben."
 TTS_TMP="$(mktemp --suffix=.mp3)"
 TTS_START="$(date +%s.%N)"
-curl -ksf -b "$COOKIE" -H "X-CSRF-Token: $CSRF" -H "Content-Type: application/json" \
+curl -ksf -b "$COOKIE" -c "$COOKIE" -H "X-CSRF-Token: $CSRF" -H "Content-Type: application/json" \
   -X POST "$URL/api/tts" -d "{\"text\":\"$TTS_TEXT\"}" -o "$TTS_TMP"
 TTS_END="$(date +%s.%N)"
 TTS_ELAPSED="$(python3 -c "print($TTS_END - $TTS_START)")"
