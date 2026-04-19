@@ -72,7 +72,7 @@ journalAI läuft standardmäßig gegen OpenAI-kompatible Endpoints (jeder Provid
 
 | Tier | Chat (chars/s) | STT (RTF, lower=faster) | Embed (entries/s) | TTS (RTF, lower=faster) |
 |---|---|---|---|---|
-| Minimal (CPX41, CPU) | `TBD` | `TBD` | `TBD` | `TBD` |
-| Recommended (GEX44, RTX 6000 Ada) | `TBD` | `TBD` | `TBD` | `TBD` |
+| Minimal (CPX42, CPU, Hetzner Cloud) | `TBD` | `TBD` | `TBD` | `TBD` |
+| Recommended (GPU, extern) | siehe [hetzner.md](docs/self-hosting/hetzner.md#gpu-tier--nicht-auf-hetzner-cloud-verfügbar) | | | |
 
 Detailreports: [`docs/benchmarks/`](docs/benchmarks/). Benchmarks stammen von einem realen Hetzner-Testlauf, nicht aus Herstellerangaben.

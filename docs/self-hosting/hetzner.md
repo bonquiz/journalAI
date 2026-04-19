@@ -19,11 +19,8 @@ Wenn du selbst keine geeignete Hardware hast, kannst du den lokalen LLM-Stack te
 2. `deploy/.env` und `deploy/.env.local-llm` lokal vorbereiten (siehe `docs/self-hosting/local-llm.md`).
 3. Bootstrap:
    ```bash
-   # Kurztest, CPU-only, ~0,03 €/h
+   # Kurztest, CPU-only, ~0,04 €/h
    ./scripts/hetzner/bootstrap.sh --tier minimal
-
-   # Brauchbare Chat-Qualität, GPU, ~1,05 €/h
-   ./scripts/hetzner/bootstrap.sh --tier recommended
    ```
 4. Das Skript gibt am Ende die URL aus (Form: `https://<ip>.sslip.io`). Der erste Login-Flow geht ganz normal über das UI.
 5. Abreißen:
@@ -35,8 +32,17 @@ Wenn du selbst keine geeignete Hardware hast, kannst du den lokalen LLM-Stack te
 
 | Tier | Server-Typ | ~ Kosten/h | Typische Test-Laufzeit |
 |---|---|---|---|
-| Minimal | cpx41 | 0,03 € | 1-4 h |
-| Recommended | gex44 | 1,05 € | 30-120 min |
+| Minimal | cpx42 | 0,04 € | 1-4 h |
+
+## GPU-Tier — nicht auf Hetzner Cloud verfügbar
+
+Stand April 2026 bietet **Hetzner Cloud** keine GPU-Instanzen an; die GEX-Serie ist ein Produkt des separaten **Hetzner Robot** (dedicated servers, eigene API, deutlich längere Laufzeit- und Bezahlzyklen, kein on-demand-stundenweiser Betrieb vergleichbar zu HCloud).
+
+Für den GPU-Testlauf ("Recommended Tier") empfehlen wir alternativ:
+- **Hetzner Robot** — dedicated server mit GPU, über Web-Konsole oder Robot-API bestellbar. Mindest-Mietzeit und Setup-Gebühren beachten.
+- **Paperspace / Lambda / RunPod / Vast.ai** — reine on-demand-GPU-Cloud-Provider, pay-per-hour, vergleichbarer Setup-Aufwand. Unser `docker-compose.local-llm.gpu.yml`-Overlay läuft dort out of the box, sofern `nvidia-container-toolkit` auf dem Host installiert ist.
+
+Das `--tier recommended`-Flag des Bootstrap-Skripts bricht daher aktuell mit einer Fehlermeldung ab und verweist auf diesen Abschnitt.
 
 ## Maximal abgeschottet (Tailscale)
 
