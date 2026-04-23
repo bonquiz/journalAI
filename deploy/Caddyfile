@@ -4,7 +4,16 @@
 {$CADDY_SCHEME:http://}{$DOMAIN} {
     encode gzip
 
+    log {
+        output stdout
+        format console
+    }
+
     handle /api/* {
+        # API responses must never be cached by the browser — auth state
+        # depends on live Set-Cookie + Session handling, and any cached 3xx
+        # from a past misconfiguration turns into a permanent redirect loop.
+        header Cache-Control "no-store"
         reverse_proxy backend:8000
     }
 
