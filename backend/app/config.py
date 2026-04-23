@@ -14,7 +14,7 @@ class Settings(BaseSettings):
     secret_key_wrap: str
     db_path: str = "/app/data/journal.db"
 
-    session_idle_minutes: int = 10
+    session_idle_minutes: int = 20
     session_absolute_hours: int = 12
     max_upload_mb: int = 25
 
@@ -58,6 +58,22 @@ class Settings(BaseSettings):
         if len(v) < 64 or not re.fullmatch(r"[0-9a-fA-F]+", v):
             raise ValueError(
                 "must be at least 64 hex characters. Generate with: openssl rand -hex 32"
+            )
+        return v
+
+    @field_validator("app_password")
+    @classmethod
+    def _validate_app_password(cls, v: str) -> str:
+        banned = {"change_me", "changeme", "password", "admin", "testpw"}
+        if v.lower() in banned:
+            raise ValueError(
+                f"APP_PASSWORD is on the banned-default list ({v!r}). "
+                "Set a real password."
+            )
+        if len(v) < 12:
+            raise ValueError(
+                "APP_PASSWORD must be at least 12 characters. Generate with: "
+                "openssl rand -base64 18"
             )
         return v
 

@@ -6,7 +6,7 @@ type SessionState = {
   idleSecondsLeft: number;
 };
 
-const IDLE_LIMIT_S = 10 * 60; // matches backend default SESSION_IDLE_MINUTES
+const IDLE_LIMIT_S = 20 * 60; // matches backend default SESSION_IDLE_MINUTES
 
 function isGatewayChallenge(r: Response): boolean {
   const www = r.headers.get("www-authenticate") ?? "";
@@ -31,7 +31,18 @@ function createSession() {
     stopTicking();
     if (typeof document === "undefined") return;
     tickTimer = setInterval(() => {
-      update((s) => ({ ...s, idleSecondsLeft: Math.max(0, s.idleSecondsLeft - 1) }));
+      update((s) => {
+        const next = Math.max(0, s.idleSecondsLeft - 1);
+        if (next === 0 && s.authenticated) {
+          // Fire-and-forget: the logout() call will itself stop the timer and
+          // navigate to /login. Scheduled as a microtask so we don't mutate
+          // the store while inside an `update` callback.
+          queueMicrotask(() => {
+            void logout();
+          });
+        }
+        return { ...s, idleSecondsLeft: next };
+      });
     }, 1000);
     activityHandler = () =>
       update((s) => (s.authenticated ? { ...s, idleSecondsLeft: IDLE_LIMIT_S } : s));

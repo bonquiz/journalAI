@@ -108,7 +108,7 @@
 </script>
 
 <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
-<section class="player" onkeydown={onKey}>
+<section class="player" aria-label="Audio-Wiedergabe" onkeydown={onKey}>
   <button
     type="button"
     class="play"

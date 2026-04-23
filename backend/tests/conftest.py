@@ -4,7 +4,7 @@ import os
 import tempfile
 
 # Idempotent: only set if missing, so production-like envs still win.
-os.environ.setdefault("APP_PASSWORD", "testpw")
+os.environ.setdefault("APP_PASSWORD", "test-only-seed-password")
 os.environ.setdefault("DB_ENCRYPTION_KEY", "a" * 64)
 os.environ.setdefault("SESSION_SECRET", "b" * 64)
 os.environ.setdefault("SECRET_KEY_WRAP", "c" * 64)

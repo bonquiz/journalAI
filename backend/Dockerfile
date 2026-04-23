@@ -3,6 +3,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential libsqlcipher-dev sqlcipher pkg-config \
     && rm -rf /var/lib/apt/lists/*
 
+# Skip .pyc generation so the image stays compatible with a read-only
+# root filesystem (no __pycache__ writes at runtime).
+ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1
+
 WORKDIR /app
 # Copy code BEFORE pip install — setuptools needs app/ to build the package.
 COPY pyproject.toml ./

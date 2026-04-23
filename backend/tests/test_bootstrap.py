@@ -24,7 +24,7 @@ def test_bootstrap_creates_settings_row():
     with SessionLocal() as db:
         s = db.get(AppSettings, 1)
         assert s is not None
-        assert verify_password("testpw", s.password_hash)
+        assert verify_password("test-only-seed-password", s.password_hash)
 
 
 def test_bootstrap_is_idempotent():

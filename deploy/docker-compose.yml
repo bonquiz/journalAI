@@ -16,6 +16,12 @@ services:
       - frontend
       - backend
     restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    cap_add:
+      - NET_BIND_SERVICE  # binds :80 and :443 inside the container
 
   backend:
     build: ../backend
@@ -24,10 +30,28 @@ services:
     volumes:
       - ../data:/app/data
     restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    read_only: true
+    tmpfs:
+      - /tmp:size=64m
+      # alembic writes a temp copy of migration scripts in some paths; /app is
+      # already built-in read-only layers, and data lives in the volume.
 
   frontend:
     build: ../frontend
     restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    read_only: true
+    tmpfs:
+      - /tmp:size=16m
+      - /var/cache/nginx:size=32m
+      - /var/run:size=4m
 
 volumes:
   caddy_data: {}
