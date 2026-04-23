@@ -8,6 +8,16 @@ type SessionState = {
 
 const IDLE_LIMIT_S = 10 * 60; // matches backend default SESSION_IDLE_MINUTES
 
+function isGatewayChallenge(r: Response): boolean {
+  const www = r.headers.get("www-authenticate") ?? "";
+  if (/^Cloudflare-Access/i.test(www)) return true;
+  // Some gateways (and CF on certain paths) drop the header but set cf-mitigated
+  // or return no body on the API path. Treat a non-JSON content-type as a tell.
+  const ct = r.headers.get("content-type") ?? "";
+  if (r.headers.get("cf-mitigated") && !ct.includes("application/json")) return true;
+  return false;
+}
+
 function createSession() {
   const { subscribe, set, update } = writable<SessionState>({
     authenticated: false,
@@ -62,7 +72,17 @@ function createSession() {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ password, totp }),
     });
-    if (!r.ok) throw new Error("login failed");
+    if (!r.ok) {
+      // If an upstream access gateway (e.g. Cloudflare Access) has expired our
+      // SSO token, it intercepts the API call with 401 + WWW-Authenticate
+      // instead of redirecting. A full page reload lets the gateway redirect
+      // through its own login flow.
+      if (r.status === 401 && isGatewayChallenge(r)) {
+        if (typeof window !== "undefined") window.location.reload();
+        throw new Error("gateway reauth required");
+      }
+      throw new Error("login failed");
+    }
     set({ authenticated: true, idleSecondsLeft: IDLE_LIMIT_S });
     startTicking();
   }
