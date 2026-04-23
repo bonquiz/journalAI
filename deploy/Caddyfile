@@ -1,4 +1,7 @@
-{$DOMAIN} {
+# HTTPS is terminated by the upstream gateway (Cloudflare Tunnel, Traefik,
+# nginx-proxy, …) when ${TLS_MODE} is "off". For standalone deployments
+# remove the `http://` prefix so Caddy obtains a Let's Encrypt certificate.
+{$CADDY_SCHEME:http://}{$DOMAIN} {
     encode gzip
 
     handle /api/* {

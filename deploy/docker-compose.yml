@@ -13,6 +13,10 @@ services:
     #   - "443:443"
     environment:
       DOMAIN: ${DOMAIN}
+      # Default: Caddy terminates TLS and auto-provisions via Let's Encrypt.
+      # Set CADDY_SCHEME=http:// in .env when a tunnel/proxy terminates TLS
+      # upstream, so Caddy serves plain HTTP without a redirect loop.
+      CADDY_SCHEME: ${CADDY_SCHEME:-}
     volumes:
       - ./Caddyfile:/etc/caddy/Caddyfile:ro
       - caddy_data:/data
