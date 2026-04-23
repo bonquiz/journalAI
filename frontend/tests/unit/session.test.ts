@@ -55,4 +55,36 @@ describe("session.login", () => {
     await expect(session.login("wrongpw")).rejects.toThrow("login failed");
     expect(window.location.reload).not.toHaveBeenCalled();
   });
+
+  it("reloads when fetch receives an opaqueredirect (manual-redirect 3xx)", async () => {
+    // Response cannot be constructed with type: "opaqueredirect" directly;
+    // fake just enough of the Response shape.
+    const fakeResponse = {
+      type: "opaqueredirect",
+      status: 0,
+      ok: false,
+      redirected: false,
+      url: "",
+      headers: new Headers(),
+    } as unknown as Response;
+    globalThis.fetch = vi.fn().mockResolvedValue(fakeResponse) as typeof fetch;
+
+    await expect(session.login("testpw")).rejects.toThrow("gateway reauth required");
+    expect(window.location.reload).toHaveBeenCalledOnce();
+  });
+
+  it("reloads when fetch follows a redirect to a different origin", async () => {
+    const fakeResponse = {
+      type: "basic",
+      status: 200,
+      ok: true,
+      redirected: true,
+      url: "https://bonquiz.cloudflareaccess.com/cdn-cgi/access/login/diary",
+      headers: new Headers(),
+    } as unknown as Response;
+    globalThis.fetch = vi.fn().mockResolvedValue(fakeResponse) as typeof fetch;
+
+    await expect(session.login("testpw")).rejects.toThrow("gateway reauth required");
+    expect(window.location.reload).toHaveBeenCalledOnce();
+  });
 });

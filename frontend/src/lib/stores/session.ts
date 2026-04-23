@@ -9,12 +9,23 @@ type SessionState = {
 const IDLE_LIMIT_S = 20 * 60; // matches backend default SESSION_IDLE_MINUTES
 
 function isGatewayChallenge(r: Response): boolean {
+  // 1. Manual-redirect: an upstream access gateway intercepted with a 3xx
+  // (Cloudflare Access responds 302 to cloudflareaccess.com for expired
+  // sessions on API paths). `redirect: "manual"` surfaces this as an
+  // opaqueredirect response.
+  if (r.type === "opaqueredirect") return true;
+  // 2. Explicit gateway challenge on the response itself (some gateways send
+  // 401 + WWW-Authenticate instead of redirecting).
   const www = r.headers.get("www-authenticate") ?? "";
   if (/^Cloudflare-Access/i.test(www)) return true;
-  // Some gateways (and CF on certain paths) drop the header but set cf-mitigated
-  // or return no body on the API path. Treat a non-JSON content-type as a tell.
-  const ct = r.headers.get("content-type") ?? "";
-  if (r.headers.get("cf-mitigated") && !ct.includes("application/json")) return true;
+  // 3. Redirected into a different origin — likely the gateway's login host.
+  if (r.redirected && typeof location !== "undefined") {
+    try {
+      if (new URL(r.url).host !== location.host) return true;
+    } catch {
+      /* ignore malformed URL */
+    }
+  }
   return false;
 }
 
@@ -77,23 +88,21 @@ function createSession() {
   }
 
   async function login(password: string, totp?: string): Promise<void> {
+    // redirect: "manual" keeps 3xx visible instead of auto-following into a
+    // cross-origin gateway login page (which would fail CORS and surface as a
+    // generic TypeError).
     const r = await fetch("/api/auth/login", {
       method: "POST",
       credentials: "same-origin",
+      redirect: "manual",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ password, totp }),
     });
-    if (!r.ok) {
-      // If an upstream access gateway (e.g. Cloudflare Access) has expired our
-      // SSO token, it intercepts the API call with 401 + WWW-Authenticate
-      // instead of redirecting. A full page reload lets the gateway redirect
-      // through its own login flow.
-      if (r.status === 401 && isGatewayChallenge(r)) {
-        if (typeof window !== "undefined") window.location.reload();
-        throw new Error("gateway reauth required");
-      }
-      throw new Error("login failed");
+    if (isGatewayChallenge(r)) {
+      if (typeof window !== "undefined") window.location.reload();
+      throw new Error("gateway reauth required");
     }
+    if (!r.ok) throw new Error("login failed");
     set({ authenticated: true, idleSecondsLeft: IDLE_LIMIT_S });
     startTicking();
   }
