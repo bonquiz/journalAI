@@ -24,7 +24,7 @@
 </script>
 
 <div class="tovi">
-  <textarea bind:value {placeholder} onkeydown={handleKey} rows="8"></textarea>
+  <textarea bind:value {placeholder} onkeydown={handleKey} rows="16"></textarea>
   <div class="controls">
     <RecordButton oninsert={insert} />
     {#if onsubmit}
@@ -39,7 +39,7 @@
   .tovi { display: flex; flex-direction: column; gap: 0.5rem; }
   textarea {
     width: 100%;
-    min-height: 12rem;
+    min-height: 24rem;
     resize: vertical;
     font-family: inherit;
     /* field-sizing grows the box with content on browsers that support it,

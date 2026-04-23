@@ -37,7 +37,7 @@ input, textarea, button, select {
 }
 
 textarea {
-  min-height: 12rem;
+  min-height: 24rem;
   width: 100%;
 }
 
