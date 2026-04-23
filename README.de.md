@@ -109,6 +109,14 @@ E2E_LIVE=1 \
 
 Nichts aus deinem Tagebuch, Audio oder Secrets landet jemals in diesem Repository. Deine Daten liegen im Docker-Volume `./data/` (SQLCipher-verschlüsselt). Audio-Dateien werden unmittelbar nach der Transkription verworfen.
 
+## Sicherheit
+
+- Container laufen mit `cap_drop: ALL`, `no-new-privileges` und read-only-Root-FS (Schreibzugriffe nur in tmpfs + Data-Volume). Frontend nutzt `nginx-unprivileged` auf Port 8080 — kein Root im Container.
+- `APP_PASSWORD` wird beim Start validiert: Backend startet nicht mit <12 Zeichen oder banned defaults (`CHANGE_ME`, `password`, `admin`, `testpw`, …).
+- Sessions laufen nach 20 Minuten Inaktivität ab (`SESSION_IDLE_MINUTES`), absolutes Limit 12 h. Der Idle-Logout wird auch clientseitig erzwungen — die SPA leitet auf `/login` um, sobald der Countdown auf 0 ist.
+
+Vulnerability-Reports: siehe [`SECURITY.md`](SECURITY.md).
+
 ## Lizenz
 
 MIT — siehe [`LICENSE`](LICENSE).

@@ -25,6 +25,18 @@ somewhere safe (e.g. a password manager).
 Set `APP_PASSWORD` in `.env` before the first start. This is the initial login password
 for the single-user web interface. It can be changed later via `/settings`.
 
+The config validator rejects obvious weak defaults — the backend refuses to boot if
+`APP_PASSWORD` is shorter than 12 characters or in the banned-default list
+(`CHANGE_ME`, `changeme`, `password`, `admin`, `testpw`). Generate a real one with:
+
+```bash
+openssl rand -base64 18
+```
+
+Note: after the first boot the DB-stored password hash is authoritative. Rotating
+`APP_PASSWORD` in `.env` does **not** change your login password — only the initial
+seed does. To change the actual password, use `/settings` in the UI.
+
 ## 4. First Start
 
 ```bash
@@ -77,3 +89,47 @@ application works over plain HTTP (no TLS). This is intentional for local develo
 For any deployment reachable from the internet, `DOMAIN` must be a real hostname. The
 bundled Caddy reverse proxy will automatically obtain a Let's Encrypt TLS certificate
 for that hostname on first start — no manual certificate management is needed.
+
+## 9. Deploying behind a tunnel / upstream proxy
+
+If HTTPS is already terminated by an upstream gateway (Cloudflare Tunnel, Traefik,
+nginx-proxy, Authelia, …), Caddy must serve plain HTTP inside the docker network
+instead of trying to provision its own certificate. Set in `.env`:
+
+```bash
+DOMAIN=yourdomain.example
+CADDY_SCHEME=http://
+COMPOSE_GATEWAY_NETWORK=<name-of-existing-docker-network>
+```
+
+- `CADDY_SCHEME=http://` — Caddy listens on port 80 only, no auto-HTTPS, no redirect loop.
+- `COMPOSE_GATEWAY_NETWORK` — an **externally-managed** docker network the upstream gateway
+  is already on. Caddy gets attached to it so the gateway can reach `journalai-caddy:80`
+  by DNS name, without publishing host ports. Create the network once if it doesn't exist:
+
+  ```bash
+  docker network create gateway
+  ```
+
+In this mode, the `ports:` block on the caddy service in `docker-compose.yml` stays
+commented out — the upstream gateway is the only entry point.
+
+### Cloudflare Tunnel ingress example
+
+Point your tunnel's ingress rule for the hostname at the service DNS name:
+
+```yaml
+ingress:
+  - hostname: yourdomain.example
+    service: http://journalai-caddy:80
+```
+
+The `cloudflared` container must be on the same `COMPOSE_GATEWAY_NETWORK`.
+
+## 10. Session Timeouts
+
+- `SESSION_IDLE_MINUTES` (default **20**) — auto-logout after this much inactivity.
+- `SESSION_ABSOLUTE_HOURS` (default 12) — hard cap regardless of activity.
+
+The client counts down alongside the server and forces a redirect to `/login` when
+the idle window hits zero, so the UI never leaves a stale session visible.

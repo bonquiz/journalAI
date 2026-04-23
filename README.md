@@ -111,6 +111,14 @@ E2E_LIVE=1 \
 
 Nothing from your journal, audio, or secrets is committed to this repository. Data lives in the `./data/` Docker volume (SQLCipher-encrypted). Audio files are discarded immediately after transcription.
 
+## Security
+
+- Containers run with `cap_drop: ALL`, `no-new-privileges`, and a read-only root filesystem (writes confined to tmpfs + the data volume). The frontend uses `nginx-unprivileged` on port 8080 (no root inside the container).
+- `APP_PASSWORD` is validated at startup: <12 chars or banned defaults (`CHANGE_ME`, `password`, `admin`, `testpw`, …) cause the backend to refuse to boot.
+- Sessions idle-timeout after 20 minutes (`SESSION_IDLE_MINUTES`), absolute expiry 12 h. Idle logout is enforced client-side too — the SPA redirects to `/login` when the countdown hits zero.
+
+Vulnerability reports: see [`SECURITY.md`](SECURITY.md).
+
 ## License
 
 MIT — see [`LICENSE`](LICENSE).
