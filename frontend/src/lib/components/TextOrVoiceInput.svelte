@@ -24,7 +24,7 @@
 </script>
 
 <div class="tovi">
-  <textarea bind:value {placeholder} onkeydown={handleKey} rows="4"></textarea>
+  <textarea bind:value {placeholder} onkeydown={handleKey} rows="8"></textarea>
   <div class="controls">
     <RecordButton oninsert={insert} />
     {#if onsubmit}
@@ -37,7 +37,15 @@
 
 <style>
   .tovi { display: flex; flex-direction: column; gap: 0.5rem; }
-  textarea { width: 100%; resize: vertical; font-family: inherit; }
+  textarea {
+    width: 100%;
+    min-height: 12rem;
+    resize: vertical;
+    font-family: inherit;
+    /* field-sizing grows the box with content on browsers that support it,
+       which replaces the missing drag-handle on mobile. */
+    field-sizing: content;
+  }
   .controls { display: flex; gap: 0.5rem; flex-wrap: wrap; }
   .controls :global(button) { flex: 1 1 auto; min-width: 8rem; }
 </style>
