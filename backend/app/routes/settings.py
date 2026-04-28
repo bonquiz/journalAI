@@ -9,6 +9,7 @@ from app.models.entry_embedding import EntryEmbedding
 from app.models.settings import AppSettings
 from app.schemas.settings import PasswordChange, SettingsOut, SettingsPatch
 from app.services.llm_client import resolved_base_url, resolved_model
+from app.services.prompts import COACH_PRESETS, DEFAULT_COACH_PRESET_KEY
 
 router = APIRouter(prefix="/api/settings")
 
@@ -18,6 +19,13 @@ def _mask(wrapped: str | None) -> str | None:
         return None
     raw = unwrap_secret(wrapped)
     return "…" + raw[-4:] if len(raw) >= 4 else "…"
+
+
+def _coach_presets_payload() -> list[dict]:
+    return [
+        {"key": k, "label": v["label"], "text": v["text"]}
+        for k, v in COACH_PRESETS.items()
+    ]
 
 
 def _settings_to_out(s: AppSettings) -> SettingsOut:
@@ -44,7 +52,10 @@ def _settings_to_out(s: AppSettings) -> SettingsOut:
         tts_resolved_model=resolved_model("tts"),
         tts_voice=s.tts_voice,
         tts_speed=s.tts_speed,
-        system_prompt=s.system_prompt,
+        coach_prompt=s.coach_prompt,
+        summary_prompt=s.summary_prompt,
+        coach_presets=_coach_presets_payload(),
+        default_coach_preset_key=DEFAULT_COACH_PRESET_KEY,
         totp_enabled=bool(s.totp_secret),
     )
 
@@ -86,8 +97,15 @@ async def update_settings(body: SettingsPatch) -> dict:
             # None or empty string resets override to NULL.
             raw_speed = data["tts_speed"]
             s.tts_speed = None if raw_speed in (None, "") else float(raw_speed)
-        if "system_prompt" in data:
-            s.system_prompt = data["system_prompt"]
+        for prompt_field in ("coach_prompt", "summary_prompt"):
+            if prompt_field in data:
+                raw = data[prompt_field]
+                # Empty string / whitespace-only resets override → NULL
+                # (Default-Prompt wird zur Laufzeit benutzt).
+                if isinstance(raw, str) and raw.strip():
+                    setattr(s, prompt_field, raw)
+                else:
+                    setattr(s, prompt_field, None)
 
         new_embed_model = s.embed_model
         if (
