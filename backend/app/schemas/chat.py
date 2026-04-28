@@ -10,7 +10,7 @@ class ChatMessage(BaseModel):
 
 class ChatRequest(BaseModel):
     messages: list[ChatMessage]
-    system_prompt_override: str | None = None
+    coach_prompt_override: str | None = None
 
 
 class FinalizeRequest(BaseModel):
