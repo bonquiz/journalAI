@@ -43,6 +43,9 @@ def test_get_settings_masks_keys():
     assert g["chat_api_key_masked"] == "…1234"
     assert g["chat_base_url"] == "https://x/v1"
     assert g["chat_model"] == "m"
+    assert "coach_presets" in g
+    assert {p["key"] for p in g["coach_presets"]} == {"therapist", "coach", "stoic", "spiritual"}
+    assert g["default_coach_preset_key"] == "therapist"
 
 
 def test_put_wraps_key_in_db():

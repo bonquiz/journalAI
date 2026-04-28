@@ -15,7 +15,7 @@ def setup_module():
     engine.dispose()
     Base.metadata.create_all(engine)
     with SessionLocal() as db:
-        db.merge(AppSettings(id=1, password_hash=hash_password("pw"), system_prompt="SYS"))
+        db.merge(AppSettings(id=1, password_hash=hash_password("pw"), coach_prompt="SYS"))
         db.commit()
 
 
