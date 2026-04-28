@@ -1,6 +1,7 @@
-"""Chat streaming service. Uses OpenAI-compatible /v1/chat/completions with
-stream=True. System prompt is DB-configurable via AppSettings.system_prompt;
-falls back to the STRUCTURE_SYSTEM_PROMPT default.
+"""Chat streaming + finalize service. Coach-Prompt aus AppSettings.coach_prompt
+(fällt auf DEFAULT_COACH_PROMPT zurück); Finalize konkateniert
+AppSettings.summary_prompt (oder DEFAULT_SUMMARY_PROMPT) mit dem hardcoded
+SUMMARY_JSON_SCHEMA_SUFFIX (inkl. {existing_tags}-Substitution).
 """
 import json
 from collections.abc import Iterator
@@ -10,22 +11,33 @@ from app.db import SessionLocal
 from app.models.settings import AppSettings
 from app.models.tag import Tag
 from app.services.llm_client import get_client
-from app.services.prompts import FINALIZE_SYSTEM_PROMPT, STRUCTURE_SYSTEM_PROMPT
+from app.services.prompts import (
+    DEFAULT_COACH_PROMPT,
+    DEFAULT_SUMMARY_PROMPT,
+    SUMMARY_JSON_SCHEMA_SUFFIX,
+)
 
 
-def _system_prompt(override: str | None) -> str:
+def _coach_prompt(override: str | None) -> str:
     if override:
         return override
     with SessionLocal() as db:
         s = db.get(AppSettings, 1)
-        return s.system_prompt if (s and s.system_prompt) else STRUCTURE_SYSTEM_PROMPT
+        return s.coach_prompt if (s and s.coach_prompt) else DEFAULT_COACH_PROMPT
+
+
+def _summary_prompt() -> str:
+    with SessionLocal() as db:
+        s = db.get(AppSettings, 1)
+        body = s.summary_prompt if (s and s.summary_prompt) else DEFAULT_SUMMARY_PROMPT
+    return body + SUMMARY_JSON_SCHEMA_SUFFIX
 
 
 def stream_chat(
-    messages: list[dict], system_prompt_override: str | None = None
+    messages: list[dict], coach_prompt_override: str | None = None
 ) -> Iterator[str]:
     client, model = get_client("chat")
-    sys_msg = {"role": "system", "content": _system_prompt(system_prompt_override)}
+    sys_msg = {"role": "system", "content": _coach_prompt(coach_prompt_override)}
     stream = client.chat.completions.create(
         model=model, messages=[sys_msg] + messages, stream=True,
     )
@@ -49,7 +61,7 @@ def finalize(messages: list[dict]) -> dict:
     hint is attempted. If that fails, the JSONDecodeError propagates to the caller.
     """
     client, model = get_client("chat")
-    system = FINALIZE_SYSTEM_PROMPT.format(existing_tags=_existing_tags())
+    system = _summary_prompt().format(existing_tags=_existing_tags())
 
     def _call(use_json_mode: bool, extra_hint: str = "") -> str:
         msgs = [{"role": "system", "content": system + extra_hint}] + messages
@@ -59,7 +71,6 @@ def finalize(messages: list[dict]) -> dict:
         resp = client.chat.completions.create(**kwargs)
         return resp.choices[0].message.content or "{}"
 
-    # Try JSON-mode first; fall back on 400/422 or mentions of response_format.
     try:
         raw = _call(use_json_mode=True)
     except Exception as e:
@@ -79,7 +90,7 @@ def finalize(messages: list[dict]) -> dict:
             use_json_mode=False,
             extra_hint="\n\nDeine Antwort MUSS exakt ein JSON-Objekt sein. Nichts anderes.",
         )
-        obj = json.loads(raw2)  # if this fails, propagate → 500
+        obj = json.loads(raw2)
 
     obj.setdefault("entry_date", date.today().isoformat())
     return obj

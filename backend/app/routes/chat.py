@@ -18,7 +18,7 @@ async def chat(request: Request, body: ChatRequest) -> StreamingResponse:
         # the chunk don't break SSE framing (which uses \n\n as message delim).
         for tok in stream_chat(
             [m.model_dump() for m in body.messages],
-            body.system_prompt_override,
+            body.coach_prompt_override,
         ):
             yield f"data: {json.dumps(tok)}\n\n"
         yield "data: [DONE]\n\n"
