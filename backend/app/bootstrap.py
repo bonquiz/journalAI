@@ -3,7 +3,6 @@ from app.auth.password import hash_password
 from app.config import settings as env
 from app.db import Base, SessionLocal, engine
 from app.models.settings import AppSettings
-from app.services.prompts import STRUCTURE_SYSTEM_PROMPT
 
 
 def ensure_bootstrap() -> None:
@@ -16,7 +15,8 @@ def ensure_bootstrap() -> None:
             AppSettings(
                 id=1,
                 password_hash=hash_password(env.app_password),
-                system_prompt=STRUCTURE_SYSTEM_PROMPT or None,
+                coach_prompt=None,
+                summary_prompt=None,
             )
         )
         db.commit()

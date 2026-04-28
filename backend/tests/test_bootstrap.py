@@ -25,6 +25,8 @@ def test_bootstrap_creates_settings_row():
         s = db.get(AppSettings, 1)
         assert s is not None
         assert verify_password("test-only-seed-password", s.password_hash)
+        assert s.coach_prompt is None
+        assert s.summary_prompt is None
 
 
 def test_bootstrap_is_idempotent():
