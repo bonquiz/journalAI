@@ -6,12 +6,16 @@
   import ModelMismatchDialog from "$lib/components/ModelMismatchDialog.svelte";
   import { envHint } from "$lib/settings-env-hint";
 
+  type CoachPreset = { key: string; label: string; text: string };
   type SettingsOut = {
     stt_base_url: string | null; stt_api_key_masked: string | null; stt_model: string | null;
     chat_base_url: string | null; chat_api_key_masked: string | null; chat_model: string | null;
     embed_base_url: string | null; embed_api_key_masked: string | null; embed_model: string | null;
     tts_base_url: string | null; tts_api_key_masked: string | null; tts_model: string | null;
-    system_prompt: string | null;
+    coach_prompt: string | null;
+    summary_prompt: string | null;
+    coach_presets: CoachPreset[];
+    default_coach_preset_key: string;
     tts_voice: string | null; tts_speed: number | null;
     totp_enabled: boolean;
     stt_resolved_base_url: string | null; stt_resolved_model: string | null;
@@ -33,6 +37,26 @@
   let totpSetup = $state<{ secret: string; qr_png_base64: string } | null>(null);
   let totpCode = $state("");
   let msg: string | null = $state(null);
+
+  function applyCoachPreset(preset: CoachPreset) {
+    const current = (form.coach_prompt ?? s?.coach_prompt ?? "") as string;
+    const isCustom =
+      current.trim().length > 0 &&
+      !s?.coach_presets.some((p) => p.text === current);
+    if (isCustom && !confirm("Eigenen Coach-Prompt durch Vorlage ersetzen?")) return;
+    form.coach_prompt = preset.text;
+  }
+
+  function clearCoachPrompt() {
+    const current = (form.coach_prompt ?? s?.coach_prompt ?? "") as string;
+    if (current.trim().length > 0 && !confirm("Textfeld leeren?")) return;
+    form.coach_prompt = "";
+  }
+
+  function defaultCoachText(): string {
+    const k = s?.default_coach_preset_key ?? "therapist";
+    return s?.coach_presets.find((p) => p.key === k)?.text ?? "";
+  }
 
   let embedStatus: SearchStatus | null = $state(null);
   let mismatch: EmbeddingMismatch | null = $state(null);
@@ -172,10 +196,42 @@
         <span class="muted">{(typeof form.tts_speed === "number" ? form.tts_speed : s.tts_speed ?? 1.0).toFixed(2)}×</span>
       </label>
     </fieldset>
-    <label>
-      System-Prompt
-      <textarea bind:value={form.system_prompt} rows="6" placeholder={s.system_prompt ?? ""}></textarea>
-    </label>
+    <fieldset class="prompt-section">
+      <legend>Coach-Prompt (Reflexions-Dialog)</legend>
+      <p class="muted">
+        Der Coach begleitet dich beim Reflektieren — er strukturiert nichts und
+        schreibt keinen Eintrag. Wähle eine Persona oder formuliere einen
+        eigenen Prompt.
+      </p>
+      <div class="preset-buttons">
+        {#each s.coach_presets as preset (preset.key)}
+          <button type="button" onclick={() => applyCoachPreset(preset)}>
+            {preset.label}
+          </button>
+        {/each}
+        <button type="button" onclick={clearCoachPrompt}>Eigener Prompt</button>
+      </div>
+      <textarea
+        bind:value={form.coach_prompt}
+        rows="10"
+        placeholder={s.coach_prompt ?? defaultCoachText()}
+      ></textarea>
+    </fieldset>
+
+    <fieldset class="prompt-section">
+      <legend>Zusammenfassungs-Prompt</legend>
+      <p class="muted">
+        Wenn du auf „Tagebucheintrag erstellen" klickst, baut dieses Modell aus
+        eurem Dialog den fertigen Eintrag. Du kannst den Stil hier anpassen —
+        die JSON-Struktur des Eintrags wird automatisch ergänzt.
+      </p>
+      <textarea
+        bind:value={form.summary_prompt}
+        rows="10"
+        placeholder={s.summary_prompt ?? ""}
+      ></textarea>
+    </fieldset>
+
     <button type="button" onclick={saveEndpoints}>Speichern</button>
   </section>
 
@@ -265,5 +321,17 @@
     margin-top: 0.25rem;
     color: var(--muted, #888);
     font-size: 0.85rem;
+  }
+  .prompt-section { margin-top: 1rem; }
+  .prompt-section legend { font-weight: 600; }
+  .preset-buttons {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.4rem;
+    margin: 0.4rem 0 0.6rem;
+  }
+  .preset-buttons button {
+    padding: 0.3rem 0.7rem;
+    font-size: 0.9rem;
   }
 </style>
